@@ -36,6 +36,7 @@ function Header() {
               {label}
             </a>
           ))}
+          <a href="/blog" onClick={() => setOpen(false)}>Blog</a>
           <a className="button button--nav" href={`${homePrefix}plataformas`} onClick={() => setOpen(false)}>
             Acessar plataformas <ArrowRight size={16} aria-hidden="true" />
           </a>
@@ -193,7 +194,7 @@ function ContentSection() {
 }
 
 function BlogIndexPage() {
-  const { articles, status } = usePosts(fallbackArticles);
+  const { articles, hasMore, loadMore, status } = usePosts(fallbackArticles, 12);
 
   return (
     <main className="blog-page">
@@ -212,6 +213,13 @@ function BlogIndexPage() {
               <ArticleCard article={article} key={article.id || article.title} />
             ))}
           </div>
+          {hasMore ? (
+            <div className="blog-page__more">
+              <button className="button" type="button" onClick={loadMore} disabled={status === 'loading-more'}>
+                {status === 'loading-more' ? 'Carregando...' : 'Carregar mais conteúdos'}
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
     </main>
@@ -413,6 +421,7 @@ function Footer() {
           <a href="/#a-alm">A ALM</a>
           <a href="/#servicos">Serviços</a>
           <a href="/#conteudos">Conteúdos</a>
+          <a href="/blog">Blog</a>
         </div>
         <div>
           <h3>Contato</h3>

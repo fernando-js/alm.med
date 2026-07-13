@@ -6,8 +6,10 @@ export function usePosts(fallbackArticles, limit = null) {
     () => fallbackArticles.slice(0, limit || undefined),
     [fallbackArticles, limit],
   );
+  const [page, setPage] = useState(1);
   const [state, setState] = useState({
     articles: fallbackList,
+    hasMore: false,
     status: 'idle',
     source: 'fallback',
   });
@@ -15,28 +17,39 @@ export function usePosts(fallbackArticles, limit = null) {
   useEffect(() => {
     const controller = new AbortController();
 
-    setState((current) => ({ ...current, status: 'loading' }));
+    setState((current) => ({ ...current, status: page === 1 ? 'loading' : 'loading-more' }));
 
-    fetchPosts({ signal: controller.signal })
-      .then((posts) => {
-        setState({
-          articles: (posts.length > 0 ? posts : fallbackArticles).slice(0, limit || undefined),
+    fetchPosts({ signal: controller.signal, limit, page })
+      .then(({ posts, meta }) => {
+        setState((current) => ({
+          articles: page === 1
+            ? (posts.length > 0 ? posts : fallbackList)
+            : [...current.articles, ...posts],
+          hasMore: posts.length > 0 ? meta.hasMore : false,
           status: 'success',
           source: posts.length > 0 ? 'api' : 'fallback',
-        });
+        }));
       })
       .catch((error) => {
         if (error.name === 'AbortError') return;
 
-        setState({
-          articles: fallbackList,
+        setState((current) => ({
+          articles: page === 1 ? fallbackList : current.articles,
+          hasMore: false,
           status: 'error',
           source: 'fallback',
-        });
+        }));
       });
 
     return () => controller.abort();
-  }, [fallbackArticles, fallbackList, limit]);
+  }, [fallbackList, limit, page]);
 
-  return state;
+  return {
+    ...state,
+    loadMore: () => {
+      if (state.status !== 'loading-more' && state.hasMore) {
+        setPage((current) => current + 1);
+      }
+    },
+  };
 }

@@ -30,8 +30,14 @@ function normalizePost(post) {
   };
 }
 
-export async function fetchPosts({ signal } = {}) {
-  const response = await fetch(`${API_BASE_URL}/posts`, {
+export async function fetchPosts({ signal, limit, page } = {}) {
+  const params = new URLSearchParams();
+
+  if (limit) params.set('limit', String(limit));
+  if (page) params.set('page', String(page));
+
+  const query = params.toString();
+  const response = await fetch(`${API_BASE_URL}/posts${query ? `?${query}` : ''}`, {
     headers: { Accept: 'application/json' },
     signal,
   });
@@ -43,7 +49,14 @@ export async function fetchPosts({ signal } = {}) {
   const payload = await response.json();
   const posts = Array.isArray(payload.data) ? payload.data : [];
 
-  return posts.map(normalizePost);
+  return {
+    posts: posts.map(normalizePost),
+    meta: {
+      hasMore: Boolean(payload.meta?.has_more),
+      page: payload.meta?.page || page || 1,
+      limit: payload.meta?.limit || limit || posts.length,
+    },
+  };
 }
 
 export async function fetchPost(slug, { signal } = {}) {

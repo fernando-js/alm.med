@@ -8,8 +8,24 @@ $path = preg_replace('#^/api#', '', $path) ?: '/';
 if ($method === 'OPTIONS') { http_response_code(204); exit; }
 if ($method === 'GET' && $path === '/health') respond(['status' => 'ok', 'app' => 'alm-api']);
 if ($method === 'GET' && $path === '/posts') {
-    $stmt = db()->query("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' ORDER BY published_at DESC LIMIT 100");
-    respond(['data' => $stmt->fetchAll()]);
+    $requestedLimit = (int)($_GET['limit'] ?? $_GET['per_page'] ?? 12);
+    $limit = max(1, min($requestedLimit, 50));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $offset = ($page - 1) * $limit;
+    $queryLimit = $limit + 1;
+
+    $stmt = db()->query("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' ORDER BY published_at DESC LIMIT {$queryLimit} OFFSET {$offset}");
+    $posts = $stmt->fetchAll();
+    $hasMore = count($posts) > $limit;
+
+    respond([
+        'data' => array_slice($posts, 0, $limit),
+        'meta' => [
+            'page' => $page,
+            'limit' => $limit,
+            'has_more' => $hasMore,
+        ],
+    ]);
 }
 if ($method === 'GET' && preg_match('#^/posts/([a-z0-9-]+)$#', $path, $matches)) {
     $stmt = db()->prepare("SELECT id,title,slug,excerpt,content,featured_image,published_at FROM posts WHERE slug=? AND status='published' LIMIT 1");

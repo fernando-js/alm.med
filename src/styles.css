@@ -8,3 +8,4 @@
 @media(max-width:900px){.article-grid--blog{grid-template-columns:1fr}.post{padding:48px 0 70px}.blog-hero{padding:56px 0 42px}}
 @media(max-width:600px){.blog-hero h1,.post__header h1{font-size:38px}.post__content{font-size:16px}.post{width:min(100% - 32px,860px)}}
 .legal-page{background:#fff}.legal-page__date{display:block;margin-top:22px;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}.legal-page__content{max-width:860px}.legal-page__content section{padding:0 0 30px;margin:0 0 30px;border-bottom:1px solid #e2ebf1}.legal-page__content section:last-child{border-bottom:0}.legal-page__content h2{font-size:24px;line-height:1.25;margin:0 0 14px;color:var(--ink)}.legal-page__content p{font-size:16px;line-height:1.78;color:#223553;margin:0 0 16px}
+.blog-page__more{display:flex;justify-content:center;margin-top:48px}.button:disabled{cursor:not-allowed;opacity:.62;transform:none}
