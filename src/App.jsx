@@ -253,6 +253,130 @@ function BlogPostPage({ slug }) {
   );
 }
 
+const legalPages = {
+  '/politica-de-privacidade': {
+    title: 'Política de Privacidade',
+    updatedAt: 'Atualizada em 13/07/2026',
+    intro: 'Esta política descreve como a ALM Anestesia trata informações relacionadas ao uso deste site institucional e dos canais de contato vinculados a ele.',
+    sections: [
+      {
+        title: '1. Informações que podemos coletar',
+        paragraphs: [
+          'Podemos receber dados fornecidos voluntariamente pelo usuário, como nome, e-mail, telefone e mensagens enviadas por formulários, e-mail ou outros canais de atendimento.',
+          'Também podem ser coletadas informações técnicas básicas de navegação, como endereço IP, tipo de dispositivo, navegador, páginas acessadas e registros de segurança, quando necessários para funcionamento, proteção e melhoria do site.',
+        ],
+      },
+      {
+        title: '2. Finalidades de uso',
+        paragraphs: [
+          'Os dados podem ser utilizados para responder solicitações, orientar o usuário sobre serviços, manter registros administrativos, melhorar a experiência de navegação, proteger o site contra uso indevido e cumprir obrigações legais ou regulatórias.',
+          'O conteúdo deste site é informativo e não substitui consulta, avaliação ou orientação médica individualizada.',
+        ],
+      },
+      {
+        title: '3. Compartilhamento',
+        paragraphs: [
+          'A ALM Anestesia não vende dados pessoais. Informações podem ser compartilhadas com prestadores de tecnologia, hospedagem, segurança, atendimento ou autoridades competentes quando houver base legal ou obrigação aplicável.',
+        ],
+      },
+      {
+        title: '4. Segurança e armazenamento',
+        paragraphs: [
+          'Adotamos medidas razoáveis de segurança para proteger as informações tratadas no site. Ainda assim, nenhum ambiente digital é totalmente imune a incidentes, e o usuário também deve manter seus próprios dispositivos e credenciais protegidos.',
+          'Os dados são mantidos pelo período necessário ao atendimento das finalidades descritas, observadas obrigações legais, regulatórias e eventuais necessidades de defesa de direitos.',
+        ],
+      },
+      {
+        title: '5. Direitos do titular',
+        paragraphs: [
+          'Nos termos da legislação aplicável, o titular pode solicitar confirmação de tratamento, acesso, correção, atualização, eliminação, portabilidade ou informações sobre compartilhamento de seus dados pessoais.',
+          'Solicitações podem ser enviadas pelo e-mail contato@alm.med.br.',
+        ],
+      },
+      {
+        title: '6. Alterações desta política',
+        paragraphs: [
+          'Esta política pode ser atualizada para refletir mudanças no site, nos serviços, em requisitos legais ou em práticas internas. A versão vigente será publicada nesta página.',
+        ],
+      },
+    ],
+  },
+  '/termos': {
+    title: 'Termos de Uso',
+    updatedAt: 'Atualizados em 13/07/2026',
+    intro: 'Estes termos regulam o acesso e uso do site institucional da ALM Anestesia.',
+    sections: [
+      {
+        title: '1. Natureza informativa',
+        paragraphs: [
+          'As informações publicadas neste site têm caráter educativo e institucional. Elas não substituem consulta médica, avaliação pré-anestésica, diagnóstico, prescrição ou orientação profissional individualizada.',
+          'Em caso de dúvidas sobre saúde, cirurgia, anestesia, medicamentos ou sintomas, procure atendimento médico adequado.',
+        ],
+      },
+      {
+        title: '2. Uso do site',
+        paragraphs: [
+          'O usuário se compromete a utilizar o site de forma lícita, ética e compatível com sua finalidade informativa, sem praticar atos que possam comprometer sua segurança, disponibilidade, integridade ou funcionamento.',
+        ],
+      },
+      {
+        title: '3. Conteúdos e propriedade intelectual',
+        paragraphs: [
+          'Textos, marcas, elementos visuais, identidade, layout e demais conteúdos do site pertencem à ALM Anestesia ou são utilizados mediante autorização, licença ou base legítima.',
+          'A reprodução, distribuição, modificação ou uso comercial de conteúdos do site depende de autorização prévia, salvo quando permitido pela legislação aplicável.',
+        ],
+      },
+      {
+        title: '4. Plataformas e links externos',
+        paragraphs: [
+          'O site pode conter links para plataformas, sistemas ou páginas externas, como AnestConsulta e AnestVale. Cada ambiente pode possuir termos, políticas e regras próprias.',
+          'A ALM Anestesia não se responsabiliza por conteúdos, indisponibilidades ou práticas de terceiros fora dos ambientes sob seu controle direto.',
+        ],
+      },
+      {
+        title: '5. Limitação de responsabilidade',
+        paragraphs: [
+          'Embora busquemos manter as informações atualizadas e adequadas, não garantimos ausência de erros, interrupções, indisponibilidades ou inadequações pontuais.',
+          'Decisões clínicas devem sempre ser tomadas por profissionais habilitados, considerando o contexto específico de cada paciente.',
+        ],
+      },
+      {
+        title: '6. Contato',
+        paragraphs: [
+          'Dúvidas sobre estes termos podem ser enviadas para contato@alm.med.br.',
+        ],
+      },
+    ],
+  },
+};
+
+function LegalPage({ page }) {
+  return (
+    <main className="legal-page">
+      <section className="blog-hero">
+        <div className="container">
+          <ArrowLink href="/#inicio">Voltar ao início</ArrowLink>
+          <h1>{page.title}</h1>
+          <p>{page.intro}</p>
+          <span className="legal-page__date">{page.updatedAt}</span>
+        </div>
+      </section>
+      <section className="section">
+        <div className="container legal-page__content">
+          {page.sections.map((section) => (
+            <section key={section.title}>
+              <h2>{section.title}</h2>
+              {section.paragraphs.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+            </section>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function FinalCta() {
   return (
     <section className="final-cta">
@@ -280,10 +404,10 @@ function Footer() {
         </div>
         <div>
           <h3>Navegação</h3>
-          <a href="#inicio">Início</a>
-          <a href="#a-alm">A ALM</a>
-          <a href="#servicos">Serviços</a>
-          <a href="#conteudos">Conteúdos</a>
+          <a href="/#inicio">Início</a>
+          <a href="/#a-alm">A ALM</a>
+          <a href="/#servicos">Serviços</a>
+          <a href="/#conteudos">Conteúdos</a>
         </div>
         <div>
           <h3>Contato</h3>
@@ -307,6 +431,7 @@ export default function App() {
   const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
   const blogMatch = pathname.match(/^\/blog\/([^/]+)$/);
   const isBlogIndex = pathname === '/blog';
+  const legalPage = legalPages[pathname];
 
   return (
     <>
@@ -315,6 +440,8 @@ export default function App() {
         <BlogPostPage slug={decodeURIComponent(blogMatch[1])} />
       ) : isBlogIndex ? (
         <BlogIndexPage />
+      ) : legalPage ? (
+        <LegalPage page={legalPage} />
       ) : (
         <main>
           <Hero />
