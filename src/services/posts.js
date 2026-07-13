@@ -23,6 +23,7 @@ function normalizePost(post) {
     time: formatPublishedAt(post.published_at),
     title: post.title,
     excerpt: post.excerpt || 'Leia o conteúdo completo preparado pela equipe ALM Anestesia.',
+    content: post.content || '',
     image: 'records',
     imageUrl,
     href: post.slug ? `/blog/${post.slug}` : '/blog',
@@ -43,4 +44,19 @@ export async function fetchPosts({ signal } = {}) {
   const posts = Array.isArray(payload.data) ? payload.data : [];
 
   return posts.map(normalizePost);
+}
+
+export async function fetchPost(slug, { signal } = {}) {
+  const response = await fetch(`${API_BASE_URL}/posts/${encodeURIComponent(slug)}`, {
+    headers: { Accept: 'application/json' },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao carregar post: ${response.status}`);
+  }
+
+  const payload = await response.json();
+
+  return payload.data ? normalizePost(payload.data) : null;
 }

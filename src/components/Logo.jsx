@@ -13,7 +13,7 @@ export default function Logo({ light = false, variant = 'horizontal' }) {
   return (
     <a
       className={`logo logo--${variant} ${light ? 'logo--light' : ''}`}
-      href="#inicio"
+      href="/#inicio"
       aria-label="ALM Anestesia — início"
     >
       <LogoMark />

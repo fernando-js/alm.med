@@ -8,7 +8,7 @@ $path = preg_replace('#^/api#', '', $path) ?: '/';
 if ($method === 'OPTIONS') { http_response_code(204); exit; }
 if ($method === 'GET' && $path === '/health') respond(['status' => 'ok', 'app' => 'alm-api']);
 if ($method === 'GET' && $path === '/posts') {
-    $stmt = db()->query("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' ORDER BY published_at DESC LIMIT 30");
+    $stmt = db()->query("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' ORDER BY published_at DESC LIMIT 100");
     respond(['data' => $stmt->fetchAll()]);
 }
 if ($method === 'GET' && preg_match('#^/posts/([a-z0-9-]+)$#', $path, $matches)) {

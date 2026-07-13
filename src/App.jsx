@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowRight, ClipboardCheck, HeartPulse, Menu, MessageCircle, X } from 'lucide-react';
 import Logo from './components/Logo';
 import { fallbackArticles, navigationItems, platforms } from './data/siteContent';
+import { usePost } from './hooks/usePost';
 import { usePosts } from './hooks/usePosts';
 
 function ArrowLink({ children, href = '#', className = '' }) {
@@ -15,6 +16,7 @@ function ArrowLink({ children, href = '#', className = '' }) {
 
 function Header() {
   const [open, setOpen] = useState(false);
+  const homePrefix = window.location.pathname === '/' ? '#' : '/#';
 
   return (
     <header className="header">
@@ -30,11 +32,11 @@ function Header() {
         </button>
         <nav className={open ? 'nav nav--open' : 'nav'} aria-label="Navegação principal">
           {navigationItems.map(([label, id]) => (
-            <a key={id} href={`#${id}`} onClick={() => setOpen(false)}>
+            <a key={id} href={`${homePrefix}${id}`} onClick={() => setOpen(false)}>
               {label}
             </a>
           ))}
-          <a className="button button--nav" href="#plataformas" onClick={() => setOpen(false)}>
+          <a className="button button--nav" href={`${homePrefix}plataformas`} onClick={() => setOpen(false)}>
             Acessar plataformas <ArrowRight size={16} aria-hidden="true" />
           </a>
         </nav>
@@ -171,7 +173,7 @@ function ArticleCard({ article }) {
 }
 
 function ContentSection() {
-  const { articles } = usePosts(fallbackArticles);
+  const { articles } = usePosts(fallbackArticles, 6);
 
   return (
     <section className="section content" id="conteudos">
@@ -187,6 +189,67 @@ function ContentSection() {
         </div>
       </div>
     </section>
+  );
+}
+
+function BlogIndexPage() {
+  const { articles, status } = usePosts(fallbackArticles);
+
+  return (
+    <main className="blog-page">
+      <section className="blog-hero">
+        <div className="container">
+          <ArrowLink href="/#conteudos">Voltar ao início</ArrowLink>
+          <h1>Conteúdos ALM</h1>
+          <p>Informação sobre anestesiologia, avaliação pré-anestésica e segurança cirúrgica para pacientes e profissionais.</p>
+        </div>
+      </section>
+      <section className="section">
+        <div className="container">
+          {status === 'loading' ? <p className="blog-status">Carregando conteúdos...</p> : null}
+          <div className="article-grid article-grid--blog">
+            {articles.map((article) => (
+              <ArticleCard article={article} key={article.id || article.title} />
+            ))}
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function BlogPostPage({ slug }) {
+  const { post, status } = usePost(slug);
+
+  return (
+    <main className="post-page">
+      <article className="container post">
+        <ArrowLink href="/blog">Todos os conteúdos</ArrowLink>
+        {status === 'loading' ? <p className="blog-status">Carregando artigo...</p> : null}
+        {status === 'error' ? (
+          <div className="post__empty">
+            <h1>Conteúdo não encontrado</h1>
+            <p>O artigo solicitado não está disponível ou foi removido.</p>
+            <ArrowLink href="/blog">Ver conteúdos</ArrowLink>
+          </div>
+        ) : null}
+        {post ? (
+          <>
+            <header className="post__header">
+              <div className="article__meta">
+                <span>{post.audience}</span>
+                <span>•</span>
+                <span>{post.time}</span>
+              </div>
+              <h1>{post.title}</h1>
+              {post.excerpt ? <p>{post.excerpt}</p> : null}
+            </header>
+            {post.imageUrl ? <img className="post__image" src={post.imageUrl} alt="" /> : null}
+            <div className="post__content" dangerouslySetInnerHTML={{ __html: post.content }} />
+          </>
+        ) : null}
+      </article>
+    </main>
   );
 }
 
@@ -241,17 +304,27 @@ function Footer() {
 }
 
 export default function App() {
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  const blogMatch = pathname.match(/^\/blog\/([^/]+)$/);
+  const isBlogIndex = pathname === '/blog';
+
   return (
     <>
       <Header />
-      <main>
-        <Hero />
-        <ServicesSection />
-        <PlatformsSection />
-        <AboutSection />
-        <ContentSection />
-        <FinalCta />
-      </main>
+      {blogMatch ? (
+        <BlogPostPage slug={decodeURIComponent(blogMatch[1])} />
+      ) : isBlogIndex ? (
+        <BlogIndexPage />
+      ) : (
+        <main>
+          <Hero />
+          <ServicesSection />
+          <PlatformsSection />
+          <AboutSection />
+          <ContentSection />
+          <FinalCta />
+        </main>
+      )}
       <Footer />
     </>
   );
