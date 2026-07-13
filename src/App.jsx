@@ -301,54 +301,59 @@ const legalPages = {
       },
     ],
   },
-  '/termos': {
-    title: 'Termos de Uso',
-    updatedAt: 'Atualizados em 13/07/2026',
-    intro: 'Estes termos regulam o acesso e uso do site institucional da ALM Anestesia.',
-    sections: [
-      {
-        title: '1. Natureza informativa',
-        paragraphs: [
-          'As informações publicadas neste site têm caráter educativo e institucional. Elas não substituem consulta médica, avaliação pré-anestésica, diagnóstico, prescrição ou orientação profissional individualizada.',
-          'Em caso de dúvidas sobre saúde, cirurgia, anestesia, medicamentos ou sintomas, procure atendimento médico adequado.',
-        ],
-      },
-      {
-        title: '2. Uso do site',
-        paragraphs: [
-          'O usuário se compromete a utilizar o site de forma lícita, ética e compatível com sua finalidade informativa, sem praticar atos que possam comprometer sua segurança, disponibilidade, integridade ou funcionamento.',
-        ],
-      },
-      {
-        title: '3. Conteúdos e propriedade intelectual',
-        paragraphs: [
-          'Textos, marcas, elementos visuais, identidade, layout e demais conteúdos do site pertencem à ALM Anestesia ou são utilizados mediante autorização, licença ou base legítima.',
-          'A reprodução, distribuição, modificação ou uso comercial de conteúdos do site depende de autorização prévia, salvo quando permitido pela legislação aplicável.',
-        ],
-      },
-      {
-        title: '4. Plataformas e links externos',
-        paragraphs: [
-          'O site pode conter links para plataformas, sistemas ou páginas externas, como AnestConsulta e AnestVale. Cada ambiente pode possuir termos, políticas e regras próprias.',
-          'A ALM Anestesia não se responsabiliza por conteúdos, indisponibilidades ou práticas de terceiros fora dos ambientes sob seu controle direto.',
-        ],
-      },
-      {
-        title: '5. Limitação de responsabilidade',
-        paragraphs: [
-          'Embora busquemos manter as informações atualizadas e adequadas, não garantimos ausência de erros, interrupções, indisponibilidades ou inadequações pontuais.',
-          'Decisões clínicas devem sempre ser tomadas por profissionais habilitados, considerando o contexto específico de cada paciente.',
-        ],
-      },
-      {
-        title: '6. Contato',
-        paragraphs: [
-          'Dúvidas sobre estes termos podem ser enviadas para contato@alm.med.br.',
-        ],
-      },
-    ],
-  },
 };
+
+const termsPage = {
+  title: 'Termos de Uso',
+  updatedAt: 'Atualizados em 13/07/2026',
+  intro: 'Estes termos regulam o acesso e uso do site institucional da ALM Anestesia.',
+  sections: [
+    {
+      title: '1. Natureza informativa',
+      paragraphs: [
+        'As informações publicadas neste site têm caráter educativo e institucional. Elas não substituem consulta médica, avaliação pré-anestésica, diagnóstico, prescrição ou orientação profissional individualizada.',
+        'Em caso de dúvidas sobre saúde, cirurgia, anestesia, medicamentos ou sintomas, procure atendimento médico adequado.',
+      ],
+    },
+    {
+      title: '2. Uso do site',
+      paragraphs: [
+        'O usuário se compromete a utilizar o site de forma lícita, ética e compatível com sua finalidade informativa, sem praticar atos que possam comprometer sua segurança, disponibilidade, integridade ou funcionamento.',
+      ],
+    },
+    {
+      title: '3. Conteúdos e propriedade intelectual',
+      paragraphs: [
+        'Textos, marcas, elementos visuais, identidade, layout e demais conteúdos do site pertencem à ALM Anestesia ou são utilizados mediante autorização, licença ou base legítima.',
+        'A reprodução, distribuição, modificação ou uso comercial de conteúdos do site depende de autorização prévia, salvo quando permitido pela legislação aplicável.',
+      ],
+    },
+    {
+      title: '4. Plataformas e links externos',
+      paragraphs: [
+        'O site pode conter links para plataformas, sistemas ou páginas externas, como AnestConsulta e AnestVale. Cada ambiente pode possuir termos, políticas e regras próprias.',
+        'A ALM Anestesia não se responsabiliza por conteúdos, indisponibilidades ou práticas de terceiros fora dos ambientes sob seu controle direto.',
+      ],
+    },
+    {
+      title: '5. Limitação de responsabilidade',
+      paragraphs: [
+        'Embora busquemos manter as informações atualizadas e adequadas, não garantimos ausência de erros, interrupções, indisponibilidades ou inadequações pontuais.',
+        'Decisões clínicas devem sempre ser tomadas por profissionais habilitados, considerando o contexto específico de cada paciente.',
+      ],
+    },
+    {
+      title: '6. Contato',
+      paragraphs: [
+        'Dúvidas sobre estes termos podem ser enviadas para contato@alm.med.br.',
+      ],
+    },
+  ],
+};
+
+legalPages['/termos'] = termsPage;
+legalPages['/termo-de-uso'] = termsPage;
+legalPages['/termos-de-uso'] = termsPage;
 
 function LegalPage({ page }) {
   return (
