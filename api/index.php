@@ -91,8 +91,15 @@ if ($method === 'GET' && $path === '/posts') {
     $page = max(1, (int)($_GET['page'] ?? 1));
     $offset = ($page - 1) * $limit;
     $queryLimit = $limit + 1;
+    $searchTerm = trim((string)($_GET['q'] ?? ''));
 
-    $stmt = db()->query("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' ORDER BY published_at DESC LIMIT {$queryLimit} OFFSET {$offset}");
+    if ($searchTerm !== '') {
+        $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $searchTerm) . '%';
+        $stmt = db()->prepare("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' AND (title LIKE ? OR excerpt LIKE ? OR content LIKE ?) ORDER BY published_at DESC LIMIT {$queryLimit} OFFSET {$offset}");
+        $stmt->execute([$like, $like, $like]);
+    } else {
+        $stmt = db()->query("SELECT id,title,slug,excerpt,featured_image,published_at FROM posts WHERE status='published' ORDER BY published_at DESC LIMIT {$queryLimit} OFFSET {$offset}");
+    }
     $posts = $stmt->fetchAll();
     $hasMore = count($posts) > $limit;
 
