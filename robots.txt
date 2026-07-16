@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://alm.med.br/sitemap.xml
