@@ -14,7 +14,7 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
 if (isset($_SERVER['HTTP_ORIGIN']) && $_SERVER['HTTP_ORIGIN'] === $config['app']['allowed_origin']) {
     header('Access-Control-Allow-Origin: ' . $config['app']['allowed_origin']);
-    header('Access-Control-Allow-Methods: GET, OPTIONS');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
     header('Access-Control-Allow-Headers: Accept, Content-Type');
     header('Vary: Origin');
 }
