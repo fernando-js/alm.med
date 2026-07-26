@@ -1,7 +1,8 @@
 <?php
 declare(strict_types=1);
 
-$configFile = __DIR__ . '/config.php';
+$externalConfigFile = dirname(__DIR__, 3) . '/alm-config/config.php';
+$configFile = is_file($externalConfigFile) ? $externalConfigFile : __DIR__ . '/config.php';
 if (!is_file($configFile)) {
     http_response_code(503);
     header('Content-Type: application/json');
