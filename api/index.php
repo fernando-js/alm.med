@@ -120,7 +120,7 @@ PROMPT;
             ],
             'verbosity' => 'low',
         ],
-        'max_output_tokens' => 1800,
+        'max_output_tokens' => 4000,
     ];
 
     $ch = curl_init('https://api.openai.com/v1/responses');
@@ -149,21 +149,34 @@ PROMPT;
         respond(['error' => $config['app']['debug'] ? $apiMessage : 'Não foi possível gerar a conferência agora.'], 502);
     }
 
+    if (($openAiPayload['status'] ?? '') === 'incomplete') {
+        error_log('OpenAI incomplete medication guidance response: ' . json_encode($openAiPayload['incomplete_details'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        respond(['error' => 'A conferência ficou incompleta. Tente novamente com menos medicamentos ou menos observações.'], 502);
+    }
+
     $outputText = '';
     if (isset($openAiPayload['output_text']) && is_string($openAiPayload['output_text'])) {
         $outputText = $openAiPayload['output_text'];
     } else {
         foreach (($openAiPayload['output'] ?? []) as $output) {
             foreach (($output['content'] ?? []) as $content) {
-                if (($content['type'] ?? '') === 'output_text' && isset($content['text'])) {
+                if (isset($content['text']) && is_string($content['text'])) {
                     $outputText .= $content['text'];
                 }
             }
         }
     }
 
-    $guidance = json_decode($outputText, true);
+    $jsonText = trim($outputText);
+    if (preg_match('/^```(?:json)?\s*(.*?)\s*```$/s', $jsonText, $matches)) {
+        $jsonText = trim($matches[1]);
+    } elseif (!str_starts_with($jsonText, '{') && preg_match('/\{.*\}/s', $jsonText, $matches)) {
+        $jsonText = trim($matches[0]);
+    }
+
+    $guidance = json_decode($jsonText, true);
     if (!is_array($guidance)) {
+        error_log('OpenAI unexpected medication guidance output: ' . mb_substr($outputText ?: $rawResponse, 0, 2000));
         respond(['error' => 'A conferência retornou em formato inesperado. Tente novamente.'], 502);
     }
 
