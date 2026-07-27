@@ -188,32 +188,55 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         respond(['error' => 'Dados inválidos'], 400);
     }
 
-    $field = static fn (string $key, int $max = 1200): string => trim(mb_substr((string)($payload[$key] ?? ''), 0, $max));
+    $field = static fn (string $key, int $max = 2500): string => trim(mb_substr((string)($payload[$key] ?? ''), 0, $max));
     $patientName = $field('patientName', 180);
     $whatsapp = $field('whatsapp', 60);
+    $email = $field('email', 190);
+    $cpf = $field('cpf', 20);
+    $birthDate = $field('birthDate', 20);
+    $address = $field('address', 500);
     $procedureName = $field('procedureName', 220);
     $consent = (bool)($payload['consent'] ?? false);
 
-    if ($patientName === '' || $whatsapp === '' || $procedureName === '' || !$consent) {
-        respond(['error' => 'Informe nome, WhatsApp, procedimento e aceite os termos.'], 422);
+    if ($patientName === '' || $whatsapp === '' || $email === '' || $cpf === '' || $birthDate === '' || $address === '' || $procedureName === '' || !$consent) {
+        respond(['error' => 'Informe nome, CPF, nascimento, WhatsApp, e-mail, endereço, procedimento e aceite os termos.'], 422);
+    }
+
+    $birthDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $birthDate) ? $birthDate : null;
+    if ($birthDate === null) {
+        respond(['error' => 'Informe uma data de nascimento válida.'], 422);
     }
 
     db()->exec("CREATE TABLE IF NOT EXISTS pre_assessment_requests (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         patient_name VARCHAR(180) NOT NULL,
+        cpf VARCHAR(20) NULL,
+        birth_date DATE NULL,
         whatsapp VARCHAR(60) NOT NULL,
         email VARCHAR(190) NULL,
+        address TEXT NULL,
         city VARCHAR(120) NULL,
         surgery_date DATE NULL,
         surgeon_name VARCHAR(180) NULL,
         hospital VARCHAR(180) NULL,
         procedure_name VARCHAR(220) NOT NULL,
+        anesthesia_type VARCHAR(160) NULL,
         allergies TEXT NULL,
         previous_surgeries TEXT NULL,
         current_medications TEXT NULL,
         known_conditions TEXT NULL,
+        smoking TEXT NULL,
+        alcohol_use TEXT NULL,
+        functional_capacity TEXT NULL,
+        cardiovascular_symptoms TEXT NULL,
+        respiratory_symptoms TEXT NULL,
+        dental_status TEXT NULL,
+        exams TEXT NULL,
         anesthesia_problems TEXT NULL,
         observations TEXT NULL,
+        ai_report MEDIUMTEXT NULL,
+        ai_report_generated_at DATETIME NULL,
+        report_status ENUM('pending','generated','failed') NOT NULL DEFAULT 'pending',
         consent_accepted TINYINT(1) NOT NULL DEFAULT 1,
         consent_accepted_at DATETIME NOT NULL,
         ip_address VARCHAR(45) NULL,
@@ -222,43 +245,183 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_pre_assessment_status_created (status, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    addColumnIfMissing('pre_assessment_requests', 'cpf', 'cpf VARCHAR(20) NULL AFTER patient_name');
+    addColumnIfMissing('pre_assessment_requests', 'birth_date', 'birth_date DATE NULL AFTER cpf');
+    addColumnIfMissing('pre_assessment_requests', 'address', 'address TEXT NULL AFTER email');
+    addColumnIfMissing('pre_assessment_requests', 'anesthesia_type', 'anesthesia_type VARCHAR(160) NULL AFTER procedure_name');
+    addColumnIfMissing('pre_assessment_requests', 'smoking', 'smoking TEXT NULL AFTER known_conditions');
+    addColumnIfMissing('pre_assessment_requests', 'alcohol_use', 'alcohol_use TEXT NULL AFTER smoking');
+    addColumnIfMissing('pre_assessment_requests', 'functional_capacity', 'functional_capacity TEXT NULL AFTER alcohol_use');
+    addColumnIfMissing('pre_assessment_requests', 'cardiovascular_symptoms', 'cardiovascular_symptoms TEXT NULL AFTER functional_capacity');
+    addColumnIfMissing('pre_assessment_requests', 'respiratory_symptoms', 'respiratory_symptoms TEXT NULL AFTER cardiovascular_symptoms');
+    addColumnIfMissing('pre_assessment_requests', 'dental_status', 'dental_status TEXT NULL AFTER respiratory_symptoms');
+    addColumnIfMissing('pre_assessment_requests', 'exams', 'exams TEXT NULL AFTER dental_status');
+    addColumnIfMissing('pre_assessment_requests', 'ai_report', 'ai_report MEDIUMTEXT NULL AFTER observations');
+    addColumnIfMissing('pre_assessment_requests', 'ai_report_generated_at', 'ai_report_generated_at DATETIME NULL AFTER ai_report');
+    addColumnIfMissing('pre_assessment_requests', 'report_status', "report_status ENUM('pending','generated','failed') NOT NULL DEFAULT 'pending' AFTER ai_report_generated_at");
 
     $surgeryDate = $field('surgeryDate', 20);
     $surgeryDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $surgeryDate) ? $surgeryDate : null;
 
     $stmt = db()->prepare("INSERT INTO pre_assessment_requests (
-        patient_name, whatsapp, email, city, surgery_date, surgeon_name, hospital, procedure_name,
-        allergies, previous_surgeries, current_medications, known_conditions, anesthesia_problems,
-        observations, consent_accepted, consent_accepted_at, ip_address, user_agent
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?, ?)");
+        patient_name, cpf, birth_date, whatsapp, email, address, city, surgery_date, surgeon_name, hospital,
+        procedure_name, anesthesia_type, allergies, previous_surgeries, current_medications, known_conditions,
+        smoking, alcohol_use, functional_capacity, cardiovascular_symptoms, respiratory_symptoms, dental_status,
+        exams, anesthesia_problems, observations, consent_accepted, consent_accepted_at, ip_address, user_agent
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?, ?)");
     $stmt->execute([
         $patientName,
+        $cpf,
+        $birthDate,
         $whatsapp,
-        $field('email', 190) ?: null,
+        $email,
+        $address,
         $field('city', 120) ?: null,
         $surgeryDate,
         $field('surgeonName', 180) ?: null,
         $field('hospital', 180) ?: null,
         $procedureName,
+        $field('anesthesiaType', 160) ?: null,
         $field('allergies') ?: null,
         $field('previousSurgeries') ?: null,
         $field('currentMedications') ?: null,
         $field('knownConditions') ?: null,
+        $field('smoking') ?: null,
+        $field('alcoholUse') ?: null,
+        $field('functionalCapacity') ?: null,
+        $field('cardiovascularSymptoms') ?: null,
+        $field('respiratorySymptoms') ?: null,
+        $field('dentalStatus') ?: null,
+        $field('exams', 5000) ?: null,
         $field('anesthesiaProblems') ?: null,
         $field('observations') ?: null,
         $_SERVER['REMOTE_ADDR'] ?? null,
         mb_substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
     ]);
+    $requestId = (int)db()->lastInsertId();
+
+    $aiReport = null;
+    $reportStatus = 'pending';
+    $apiKey = trim((string)($config['openai']['api_key'] ?? ''));
+    if ($apiKey !== '' && !str_starts_with($apiKey, 'COLOQUE_') && function_exists('curl_init')) {
+        $birthDateObject = new DateTimeImmutable($birthDate);
+        $age = $birthDateObject->diff(new DateTimeImmutable('today'))->y;
+        $reportData = [
+            'patientName' => $patientName,
+            'age' => $age,
+            'surgeonName' => $field('surgeonName', 180),
+            'procedureName' => $procedureName,
+            'surgeryDate' => $surgeryDate,
+            'hospital' => $field('hospital', 180),
+            'anesthesiaType' => $field('anesthesiaType', 160),
+            'allergies' => $field('allergies'),
+            'previousSurgeries' => $field('previousSurgeries'),
+            'currentMedications' => $field('currentMedications'),
+            'knownConditions' => $field('knownConditions'),
+            'smoking' => $field('smoking'),
+            'alcoholUse' => $field('alcoholUse'),
+            'functionalCapacity' => $field('functionalCapacity'),
+            'cardiovascularSymptoms' => $field('cardiovascularSymptoms'),
+            'respiratorySymptoms' => $field('respiratorySymptoms'),
+            'dentalStatus' => $field('dentalStatus'),
+            'exams' => $field('exams', 5000),
+            'anesthesiaProblems' => $field('anesthesiaProblems'),
+            'observations' => $field('observations'),
+        ];
+        $reportPrompt = <<<'PROMPT'
+Crie uma MINUTA de avaliação pré-anestésica em português formal para revisão e assinatura médica.
+Siga exatamente esta ordem de títulos:
+AVALIAÇÃO PRÉ-ANESTÉSICA
+ANTECEDENTES E ANAMNESE
+EXAME FÍSICO
+AVALIAÇÃO DA VIA AÉREA
+EXAMES COMPLEMENTARES
+ESTRATIFICAÇÃO PRÉ-ANESTÉSICA
+ORIENTAÇÕES PRÉ-OPERATÓRIAS
+PARECER
+
+Regras obrigatórias:
+- Não invente exame físico, sinais vitais, Mallampati, distâncias, ECG, RX, ecocardiograma, exames ou ausência de doença.
+- Use Não informado, Não apresentado, A confirmar ou A definir quando faltar dado.
+- Calcule IMC somente se peso e altura forem informados.
+- Proponha ASA apenas como hipótese com base nos dados; se faltar informação, escreva ASA a confirmar.
+- Não use "liberado" automaticamente. Prefira parecer condicionado à revisão médica final.
+- Não prescreva suspensão de medicamento quando faltarem indicação, cirurgia, função renal ou risco trombótico.
+- Inclua a assinatura:
+Dr. Fernando Xavier Ferreira
+Médico Anestesiologista
+CRM-MG 30.746
+PROMPT;
+        $model = trim((string)($config['openai']['model'] ?? 'gpt-5')) ?: 'gpt-5';
+        $requestBody = [
+            'model' => $model,
+            'input' => [
+                ['role' => 'system', 'content' => [['type' => 'input_text', 'text' => $reportPrompt]]],
+                ['role' => 'user', 'content' => [['type' => 'input_text', 'text' => 'Dados relatados pelo paciente para minuta de APA: ' . json_encode($reportData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]]],
+            ],
+            'text' => ['verbosity' => 'low'],
+            'max_output_tokens' => 5000,
+        ];
+
+        $ch = curl_init('https://api.openai.com/v1/responses');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $apiKey,
+                'Content-Type: application/json',
+            ],
+            CURLOPT_POSTFIELDS => json_encode($requestBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 45,
+        ]);
+        $rawResponse = curl_exec($ch);
+        $httpStatus = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+
+        $openAiPayload = is_string($rawResponse) ? json_decode($rawResponse, true) : null;
+        if ($httpStatus >= 200 && $httpStatus < 300 && is_array($openAiPayload) && ($openAiPayload['status'] ?? '') !== 'incomplete') {
+            $aiReport = extractOpenAiOutputText($openAiPayload) ?: null;
+        }
+    }
+
+    if ($aiReport) {
+        $reportStatus = 'generated';
+        $updateStmt = db()->prepare("UPDATE pre_assessment_requests SET ai_report=?, ai_report_generated_at=NOW(), report_status='generated' WHERE id=?");
+        $updateStmt->execute([$aiReport, $requestId]);
+    } else {
+        $reportStatus = 'failed';
+        $updateStmt = db()->prepare("UPDATE pre_assessment_requests SET report_status='failed' WHERE id=?");
+        $updateStmt->execute([$requestId]);
+    }
 
     $notificationEmail = $config['app']['notification_email'] ?? 'contato@alm.med.br';
+    $replyTo = filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : $notificationEmail;
+    $emailBody = "Nova pré-avaliação recebida pelo site ALM.\n\n"
+        . "ID: {$requestId}\n"
+        . "Paciente: {$patientName}\n"
+        . "CPF: {$cpf}\n"
+        . "Nascimento: {$birthDate}\n"
+        . "WhatsApp: {$whatsapp}\n"
+        . "E-mail: {$email}\n"
+        . "Endereço: {$address}\n"
+        . "Procedimento: {$procedureName}\n"
+        . "Cirurgião: " . ($field('surgeonName', 180) ?: 'Não informado') . "\n"
+        . "Hospital: " . ($field('hospital', 180) ?: 'Não informado') . "\n"
+        . "Status do relatório OpenAI: {$reportStatus}\n\n"
+        . "RELATÓRIO / MINUTA PARA REVISÃO MÉDICA FINAL\n\n"
+        . ($aiReport ?: 'Relatório não gerado automaticamente. Revisar dados salvos no banco.');
     @mail(
         $notificationEmail,
-        'Nova solicitação de pré-avaliação ALM',
-        "Nova solicitação recebida pelo site ALM.\n\nPaciente: {$patientName}\nWhatsApp: {$whatsapp}\nProcedimento: {$procedureName}\n\nDados clínicos completos foram salvos na base da API.",
-        "From: ALM Anestesia <nao-responder@alm.med.br>\r\nReply-To: {$notificationEmail}\r\nContent-Type: text/plain; charset=UTF-8"
+        'APA aguardando avaliação médica final - ALM',
+        $emailBody,
+        "From: ALM Anestesia <nao-responder@alm.med.br>\r\nReply-To: {$replyTo}\r\nContent-Type: text/plain; charset=UTF-8"
     );
 
-    respond(['data' => ['id' => (int)db()->lastInsertId()]]);
+    respond(['data' => [
+        'id' => $requestId,
+        'reportStatus' => $reportStatus,
+        'reviewPath' => '/apa-aguardando-avaliacao-medico-final',
+    ]]);
 }
 if ($method === 'GET' && $path === '/posts') {
     $requestedLimit = (int)($_GET['limit'] ?? $_GET['per_page'] ?? 12);

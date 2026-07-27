@@ -33,6 +33,32 @@ function respond(array $data, int $status = 200): never {
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
+function extractOpenAiOutputText(array $openAiPayload): string {
+    if (isset($openAiPayload['output_text']) && is_string($openAiPayload['output_text'])) {
+        return $openAiPayload['output_text'];
+    }
+
+    $outputText = '';
+    foreach (($openAiPayload['output'] ?? []) as $output) {
+        foreach (($output['content'] ?? []) as $content) {
+            if (isset($content['text']) && is_string($content['text'])) {
+                $outputText .= $content['text'];
+            }
+        }
+    }
+
+    return trim($outputText);
+}
+function addColumnIfMissing(string $table, string $column, string $definition): void {
+    global $config;
+
+    $stmt = db()->prepare('SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+    $stmt->execute([$config['db']['name'], $table, $column]);
+
+    if ((int)$stmt->fetchColumn() === 0) {
+        db()->exec("ALTER TABLE `{$table}` ADD COLUMN {$definition}");
+    }
+}
 set_exception_handler(function (Throwable $exception) use ($config): void {
     error_log($exception->getMessage());
     respond([
