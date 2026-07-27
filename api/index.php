@@ -193,13 +193,18 @@ if ($method === 'POST' && $path === '/pre-assessment') {
     $whatsapp = $field('whatsapp', 60);
     $email = $field('email', 190);
     $cpf = $field('cpf', 20);
+    $cpfDigits = preg_replace('/\D+/', '', $cpf) ?: '';
     $birthDate = $field('birthDate', 20);
     $address = $field('address', 500);
     $procedureName = $field('procedureName', 220);
     $consent = (bool)($payload['consent'] ?? false);
 
-    if ($patientName === '' || $whatsapp === '' || $email === '' || $cpf === '' || $birthDate === '' || $address === '' || $procedureName === '' || !$consent) {
+    if ($patientName === '' || $whatsapp === '' || $email === '' || $cpfDigits === '' || $birthDate === '' || $address === '' || $procedureName === '' || !$consent) {
         respond(['error' => 'Informe nome, CPF, nascimento, WhatsApp, e-mail, endereço, procedimento e aceite os termos.'], 422);
+    }
+
+    if (strlen($cpfDigits) !== 11) {
+        respond(['error' => 'Informe um CPF válido com 11 dígitos.'], 422);
     }
 
     $birthDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $birthDate) ? $birthDate : null;
@@ -207,15 +212,24 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         respond(['error' => 'Informe uma data de nascimento válida.'], 422);
     }
 
-    db()->exec("CREATE TABLE IF NOT EXISTS pre_assessment_requests (
+    db()->exec("CREATE TABLE IF NOT EXISTS patients (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        patient_name VARCHAR(180) NOT NULL,
-        cpf VARCHAR(20) NULL,
+        name VARCHAR(180) NOT NULL,
+        cpf VARCHAR(20) NOT NULL UNIQUE,
         birth_date DATE NULL,
         whatsapp VARCHAR(60) NOT NULL,
         email VARCHAR(190) NULL,
         address TEXT NULL,
         city VARCHAR(120) NULL,
+        consent_accepted_at DATETIME NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_patients_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    db()->exec("CREATE TABLE IF NOT EXISTS pre_anesthetic_assessments (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        patient_id BIGINT UNSIGNED NOT NULL,
         surgery_date DATE NULL,
         surgeon_name VARCHAR(180) NULL,
         hospital VARCHAR(180) NULL,
@@ -237,46 +251,50 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         ai_report MEDIUMTEXT NULL,
         ai_report_generated_at DATETIME NULL,
         report_status ENUM('pending','generated','failed') NOT NULL DEFAULT 'pending',
-        consent_accepted TINYINT(1) NOT NULL DEFAULT 1,
-        consent_accepted_at DATETIME NOT NULL,
         ip_address VARCHAR(45) NULL,
         user_agent VARCHAR(255) NULL,
-        status ENUM('new','contacted','archived') NOT NULL DEFAULT 'new',
+        status ENUM('new','awaiting_medical_review','reviewed','contacted','archived') NOT NULL DEFAULT 'awaiting_medical_review',
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_pre_assessment_status_created (status, created_at)
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_pre_anesthetic_patient_created (patient_id, created_at),
+        INDEX idx_pre_anesthetic_status_created (status, created_at),
+        CONSTRAINT fk_pre_anesthetic_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-    addColumnIfMissing('pre_assessment_requests', 'cpf', 'cpf VARCHAR(20) NULL AFTER patient_name');
-    addColumnIfMissing('pre_assessment_requests', 'birth_date', 'birth_date DATE NULL AFTER cpf');
-    addColumnIfMissing('pre_assessment_requests', 'address', 'address TEXT NULL AFTER email');
-    addColumnIfMissing('pre_assessment_requests', 'anesthesia_type', 'anesthesia_type VARCHAR(160) NULL AFTER procedure_name');
-    addColumnIfMissing('pre_assessment_requests', 'smoking', 'smoking TEXT NULL AFTER known_conditions');
-    addColumnIfMissing('pre_assessment_requests', 'alcohol_use', 'alcohol_use TEXT NULL AFTER smoking');
-    addColumnIfMissing('pre_assessment_requests', 'functional_capacity', 'functional_capacity TEXT NULL AFTER alcohol_use');
-    addColumnIfMissing('pre_assessment_requests', 'cardiovascular_symptoms', 'cardiovascular_symptoms TEXT NULL AFTER functional_capacity');
-    addColumnIfMissing('pre_assessment_requests', 'respiratory_symptoms', 'respiratory_symptoms TEXT NULL AFTER cardiovascular_symptoms');
-    addColumnIfMissing('pre_assessment_requests', 'dental_status', 'dental_status TEXT NULL AFTER respiratory_symptoms');
-    addColumnIfMissing('pre_assessment_requests', 'exams', 'exams TEXT NULL AFTER dental_status');
-    addColumnIfMissing('pre_assessment_requests', 'ai_report', 'ai_report MEDIUMTEXT NULL AFTER observations');
-    addColumnIfMissing('pre_assessment_requests', 'ai_report_generated_at', 'ai_report_generated_at DATETIME NULL AFTER ai_report');
-    addColumnIfMissing('pre_assessment_requests', 'report_status', "report_status ENUM('pending','generated','failed') NOT NULL DEFAULT 'pending' AFTER ai_report_generated_at");
 
     $surgeryDate = $field('surgeryDate', 20);
     $surgeryDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $surgeryDate) ? $surgeryDate : null;
 
-    $stmt = db()->prepare("INSERT INTO pre_assessment_requests (
-        patient_name, cpf, birth_date, whatsapp, email, address, city, surgery_date, surgeon_name, hospital,
-        procedure_name, anesthesia_type, allergies, previous_surgeries, current_medications, known_conditions,
-        smoking, alcohol_use, functional_capacity, cardiovascular_symptoms, respiratory_symptoms, dental_status,
-        exams, anesthesia_problems, observations, consent_accepted, consent_accepted_at, ip_address, user_agent
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?, ?)");
-    $stmt->execute([
+    $patientStmt = db()->prepare("INSERT INTO patients (
+        name, cpf, birth_date, whatsapp, email, address, city, consent_accepted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+    ON DUPLICATE KEY UPDATE
+        id = LAST_INSERT_ID(id),
+        name = VALUES(name),
+        birth_date = VALUES(birth_date),
+        whatsapp = VALUES(whatsapp),
+        email = VALUES(email),
+        address = VALUES(address),
+        city = VALUES(city),
+        consent_accepted_at = VALUES(consent_accepted_at)");
+    $patientStmt->execute([
         $patientName,
-        $cpf,
+        $cpfDigits,
         $birthDate,
         $whatsapp,
         $email,
         $address,
         $field('city', 120) ?: null,
+    ]);
+    $patientId = (int)db()->lastInsertId();
+
+    $stmt = db()->prepare("INSERT INTO pre_anesthetic_assessments (
+        patient_id, surgery_date, surgeon_name, hospital, procedure_name, anesthesia_type,
+        allergies, previous_surgeries, current_medications, known_conditions, smoking, alcohol_use,
+        functional_capacity, cardiovascular_symptoms, respiratory_symptoms, dental_status, exams,
+        anesthesia_problems, observations, ip_address, user_agent
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->execute([
+        $patientId,
         $surgeryDate,
         $field('surgeonName', 180) ?: null,
         $field('hospital', 180) ?: null,
@@ -298,7 +316,7 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         $_SERVER['REMOTE_ADDR'] ?? null,
         mb_substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
     ]);
-    $requestId = (int)db()->lastInsertId();
+    $assessmentId = (int)db()->lastInsertId();
 
     $aiReport = null;
     $reportStatus = 'pending';
@@ -386,20 +404,21 @@ PROMPT;
 
     if ($aiReport) {
         $reportStatus = 'generated';
-        $updateStmt = db()->prepare("UPDATE pre_assessment_requests SET ai_report=?, ai_report_generated_at=NOW(), report_status='generated' WHERE id=?");
-        $updateStmt->execute([$aiReport, $requestId]);
+        $updateStmt = db()->prepare("UPDATE pre_anesthetic_assessments SET ai_report=?, ai_report_generated_at=NOW(), report_status='generated' WHERE id=?");
+        $updateStmt->execute([$aiReport, $assessmentId]);
     } else {
         $reportStatus = 'failed';
-        $updateStmt = db()->prepare("UPDATE pre_assessment_requests SET report_status='failed' WHERE id=?");
-        $updateStmt->execute([$requestId]);
+        $updateStmt = db()->prepare("UPDATE pre_anesthetic_assessments SET report_status='failed' WHERE id=?");
+        $updateStmt->execute([$assessmentId]);
     }
 
     $notificationEmail = $config['app']['notification_email'] ?? 'contato@alm.med.br';
     $replyTo = filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : $notificationEmail;
     $emailBody = "Nova pré-avaliação recebida pelo site ALM.\n\n"
-        . "ID: {$requestId}\n"
+        . "Paciente ID: {$patientId}\n"
+        . "Avaliação ID: {$assessmentId}\n"
         . "Paciente: {$patientName}\n"
-        . "CPF: {$cpf}\n"
+        . "CPF: {$cpfDigits}\n"
         . "Nascimento: {$birthDate}\n"
         . "WhatsApp: {$whatsapp}\n"
         . "E-mail: {$email}\n"
@@ -418,7 +437,9 @@ PROMPT;
     );
 
     respond(['data' => [
-        'id' => $requestId,
+        'id' => $assessmentId,
+        'patientId' => $patientId,
+        'assessmentId' => $assessmentId,
         'reportStatus' => $reportStatus,
         'reviewPath' => '/apa-aguardando-avaliacao-medico-final',
     ]]);
