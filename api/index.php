@@ -7,6 +7,155 @@ $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $path = preg_replace('#^/api#', '', $path) ?: '/';
 if ($method === 'OPTIONS') { http_response_code(204); exit; }
 if ($method === 'GET' && $path === '/health') respond(['status' => 'ok', 'app' => 'alm-api']);
+function ensurePreAssessmentStorage(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS patients (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(180) NOT NULL,
+        cpf VARCHAR(20) NOT NULL UNIQUE,
+        birth_date DATE NULL,
+        whatsapp VARCHAR(60) NOT NULL,
+        email VARCHAR(190) NULL,
+        address TEXT NULL,
+        city VARCHAR(120) NULL,
+        consent_accepted_at DATETIME NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_patients_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    db()->exec("CREATE TABLE IF NOT EXISTS pre_anesthetic_assessments (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        patient_id BIGINT UNSIGNED NOT NULL,
+        surgery_date DATE NULL,
+        surgeon_name VARCHAR(180) NULL,
+        hospital VARCHAR(180) NULL,
+        procedure_name VARCHAR(220) NOT NULL,
+        anesthesia_type VARCHAR(160) NULL,
+        allergies TEXT NULL,
+        previous_surgeries TEXT NULL,
+        current_medications TEXT NULL,
+        known_conditions TEXT NULL,
+        smoking TEXT NULL,
+        alcohol_use TEXT NULL,
+        functional_capacity TEXT NULL,
+        cardiovascular_symptoms TEXT NULL,
+        respiratory_symptoms TEXT NULL,
+        dental_status TEXT NULL,
+        exams TEXT NULL,
+        anesthesia_problems TEXT NULL,
+        observations TEXT NULL,
+        ai_report MEDIUMTEXT NULL,
+        ai_report_generated_at DATETIME NULL,
+        report_status ENUM('pending','generated','failed') NOT NULL DEFAULT 'pending',
+        ip_address VARCHAR(45) NULL,
+        user_agent VARCHAR(255) NULL,
+        status ENUM('new','awaiting_medical_review','reviewed','contacted','archived') NOT NULL DEFAULT 'awaiting_medical_review',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_pre_anesthetic_patient_created (patient_id, created_at),
+        INDEX idx_pre_anesthetic_status_created (status, created_at),
+        CONSTRAINT fk_pre_anesthetic_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+
+function ensureAdminStorage(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS admin_users (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(190) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+
+if ($method === 'POST' && $path === '/admin/setup') {
+    global $config;
+    ensureAdminStorage();
+    $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
+    if (!is_array($payload)) respond(['error' => 'Dados inválidos'], 400);
+
+    $adminCount = (int)db()->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
+    $setupCode = trim((string)($config['app']['admin_setup_code'] ?? ''));
+    if ($adminCount > 0 || $setupCode === '' || str_starts_with($setupCode, 'COLOQUE_')) {
+        respond(['error' => 'Criação inicial de administrador indisponível.'], 403);
+    }
+
+    $providedCode = trim((string)($payload['setupCode'] ?? ''));
+    $name = trim(mb_substr((string)($payload['name'] ?? ''), 0, 100));
+    $email = trim(mb_substr((string)($payload['email'] ?? ''), 0, 190));
+    $password = (string)($payload['password'] ?? '');
+
+    if (!hash_equals($setupCode, $providedCode)) respond(['error' => 'Código de setup inválido.'], 403);
+    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($password) < 10) {
+        respond(['error' => 'Informe nome, e-mail válido e senha com pelo menos 10 caracteres.'], 422);
+    }
+
+    $stmt = db()->prepare('INSERT INTO admin_users (name,email,password_hash) VALUES (?,?,?)');
+    $stmt->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT)]);
+    respond(['data' => ['created' => true]]);
+}
+
+if ($method === 'POST' && $path === '/admin/login') {
+    ensureAdminStorage();
+    $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
+    if (!is_array($payload)) respond(['error' => 'Dados inválidos'], 400);
+
+    $email = trim((string)($payload['email'] ?? ''));
+    $password = (string)($payload['password'] ?? '');
+    $stmt = db()->prepare('SELECT id,name,email,password_hash FROM admin_users WHERE email=? LIMIT 1');
+    $stmt->execute([$email]);
+    $admin = $stmt->fetch();
+
+    if (!$admin || !password_verify($password, $admin['password_hash'])) {
+        respond(['error' => 'E-mail ou senha inválidos.'], 401);
+    }
+
+    session_regenerate_id(true);
+    $_SESSION['admin_user'] = ['id' => (int)$admin['id'], 'name' => $admin['name'], 'email' => $admin['email']];
+    respond(['data' => $_SESSION['admin_user']]);
+}
+
+if ($method === 'POST' && $path === '/admin/logout') {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'] ?? '', (bool)$params['secure'], (bool)$params['httponly']);
+    }
+    session_destroy();
+    respond(['data' => ['loggedOut' => true]]);
+}
+
+if ($method === 'GET' && $path === '/admin/session') {
+    respond(['data' => ['user' => $_SESSION['admin_user'] ?? null]]);
+}
+
+if ($method === 'GET' && $path === '/admin/pre-assessments') {
+    requireAdmin();
+    ensurePreAssessmentStorage();
+    $stmt = db()->query("SELECT
+        a.id, a.patient_id, a.procedure_name, a.surgery_date, a.hospital, a.status, a.report_status, a.created_at,
+        p.name AS patient_name, p.cpf, p.birth_date, p.whatsapp, p.email, p.city
+        FROM pre_anesthetic_assessments a
+        INNER JOIN patients p ON p.id = a.patient_id
+        ORDER BY a.created_at DESC
+        LIMIT 100");
+    respond(['data' => $stmt->fetchAll()]);
+}
+
+if ($method === 'GET' && preg_match('#^/admin/pre-assessments/(\d+)$#', $path, $matches)) {
+    requireAdmin();
+    ensurePreAssessmentStorage();
+    $stmt = db()->prepare("SELECT
+        a.*, p.name AS patient_name, p.cpf, p.birth_date, p.whatsapp, p.email, p.address, p.city
+        FROM pre_anesthetic_assessments a
+        INNER JOIN patients p ON p.id = a.patient_id
+        WHERE a.id=?
+        LIMIT 1");
+    $stmt->execute([(int)$matches[1]]);
+    $assessment = $stmt->fetch();
+    $assessment ? respond(['data' => $assessment]) : respond(['error' => 'Avaliação não encontrada'], 404);
+}
+
 if ($method === 'POST' && $path === '/medication-guidance') {
     $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
     if (!is_array($payload)) {
@@ -189,6 +338,14 @@ if ($method === 'POST' && $path === '/pre-assessment') {
     }
 
     $field = static fn (string $key, int $max = 2500): string => trim(mb_substr((string)($payload[$key] ?? ''), 0, $max));
+    if ($field('website', 200) !== '') {
+        respond(['data' => [
+            'id' => null,
+            'reportStatus' => 'pending',
+            'reviewPath' => '/apa-aguardando-avaliacao-medico-final',
+        ]]);
+    }
+
     $patientName = $field('patientName', 180);
     $whatsapp = $field('whatsapp', 60);
     $email = $field('email', 190);
@@ -212,54 +369,39 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         respond(['error' => 'Informe uma data de nascimento válida.'], 422);
     }
 
-    db()->exec("CREATE TABLE IF NOT EXISTS patients (
+    ensurePreAssessmentStorage();
+    db()->exec("CREATE TABLE IF NOT EXISTS submission_rate_limits (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(180) NOT NULL,
-        cpf VARCHAR(20) NOT NULL UNIQUE,
-        birth_date DATE NULL,
-        whatsapp VARCHAR(60) NOT NULL,
-        email VARCHAR(190) NULL,
-        address TEXT NULL,
-        city VARCHAR(120) NULL,
-        consent_accepted_at DATETIME NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_patients_name (name)
+        scope_hash CHAR(64) NOT NULL UNIQUE,
+        attempts INT UNSIGNED NOT NULL DEFAULT 0,
+        first_seen_at DATETIME NOT NULL,
+        last_seen_at DATETIME NOT NULL,
+        INDEX idx_submission_rate_first_seen (first_seen_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
-    db()->exec("CREATE TABLE IF NOT EXISTS pre_anesthetic_assessments (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        patient_id BIGINT UNSIGNED NOT NULL,
-        surgery_date DATE NULL,
-        surgeon_name VARCHAR(180) NULL,
-        hospital VARCHAR(180) NULL,
-        procedure_name VARCHAR(220) NOT NULL,
-        anesthesia_type VARCHAR(160) NULL,
-        allergies TEXT NULL,
-        previous_surgeries TEXT NULL,
-        current_medications TEXT NULL,
-        known_conditions TEXT NULL,
-        smoking TEXT NULL,
-        alcohol_use TEXT NULL,
-        functional_capacity TEXT NULL,
-        cardiovascular_symptoms TEXT NULL,
-        respiratory_symptoms TEXT NULL,
-        dental_status TEXT NULL,
-        exams TEXT NULL,
-        anesthesia_problems TEXT NULL,
-        observations TEXT NULL,
-        ai_report MEDIUMTEXT NULL,
-        ai_report_generated_at DATETIME NULL,
-        report_status ENUM('pending','generated','failed') NOT NULL DEFAULT 'pending',
-        ip_address VARCHAR(45) NULL,
-        user_agent VARCHAR(255) NULL,
-        status ENUM('new','awaiting_medical_review','reviewed','contacted','archived') NOT NULL DEFAULT 'awaiting_medical_review',
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_pre_anesthetic_patient_created (patient_id, created_at),
-        INDEX idx_pre_anesthetic_status_created (status, created_at),
-        CONSTRAINT fk_pre_anesthetic_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $rateScopes = [
+        ['hash' => hash('sha256', 'pre-assessment-ip:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown')), 'limit' => 5],
+        ['hash' => hash('sha256', 'pre-assessment-cpf:' . $cpfDigits), 'limit' => 3],
+    ];
+    foreach ($rateScopes as $scope) {
+        $stmt = db()->prepare('SELECT attempts, first_seen_at FROM submission_rate_limits WHERE scope_hash=? LIMIT 1');
+        $stmt->execute([$scope['hash']]);
+        $currentRate = $stmt->fetch();
+
+        if ($currentRate && strtotime((string)$currentRate['first_seen_at']) >= time() - 3600) {
+            if ((int)$currentRate['attempts'] >= $scope['limit']) {
+                respond(['error' => 'Muitas tentativas em pouco tempo. Aguarde antes de enviar novamente.'], 429);
+            }
+            $updateRate = db()->prepare('UPDATE submission_rate_limits SET attempts=attempts+1, last_seen_at=NOW() WHERE scope_hash=?');
+            $updateRate->execute([$scope['hash']]);
+        } elseif ($currentRate) {
+            $resetRate = db()->prepare('UPDATE submission_rate_limits SET attempts=1, first_seen_at=NOW(), last_seen_at=NOW() WHERE scope_hash=?');
+            $resetRate->execute([$scope['hash']]);
+        } else {
+            $insertRate = db()->prepare('INSERT INTO submission_rate_limits (scope_hash, attempts, first_seen_at, last_seen_at) VALUES (?, 1, NOW(), NOW())');
+            $insertRate->execute([$scope['hash']]);
+        }
+    }
 
     $surgeryDate = $field('surgeryDate', 20);
     $surgeryDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $surgeryDate) ? $surgeryDate : null;

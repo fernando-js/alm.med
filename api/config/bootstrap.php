@@ -10,6 +10,15 @@ if (!is_file($configFile)) {
     exit;
 }
 $config = require $configFile;
+session_name('alm_admin_session');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+    'httponly' => true,
+    'samesite' => 'Strict',
+]);
+session_start();
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
@@ -58,6 +67,13 @@ function addColumnIfMissing(string $table, string $column, string $definition): 
     if ((int)$stmt->fetchColumn() === 0) {
         db()->exec("ALTER TABLE `{$table}` ADD COLUMN {$definition}");
     }
+}
+function requireAdmin(): array {
+    if (empty($_SESSION['admin_user']) || !is_array($_SESSION['admin_user'])) {
+        respond(['error' => 'Login administrativo obrigatório'], 401);
+    }
+
+    return $_SESSION['admin_user'];
 }
 set_exception_handler(function (Throwable $exception) use ($config): void {
     error_log($exception->getMessage());
