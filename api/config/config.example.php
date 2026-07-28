@@ -8,7 +8,9 @@ return [
     ],
     'app' => [
         'allowed_origin' => 'https://alm.med.br',
-        'notification_email' => 'contato@alm.med.br',
+        'notification_email' => 'contato@alm-anestesia.com',
+        'mail_from_email' => 'contato@alm-anestesia.com',
+        'mail_from_name' => 'ALM Anestesia',
         'medication_access_code' => '',
         'admin_setup_code' => 'COLOQUE_UM_CODIGO_FORTE_PARA_CRIAR_O_PRIMEIRO_ADMIN',
         'debug' => false,

@@ -684,7 +684,9 @@ PROMPT;
         $updateStmt->execute([$assessmentId]);
     }
 
-    $notificationEmail = $config['app']['notification_email'] ?? 'contato@alm.med.br';
+    $notificationEmail = $config['app']['notification_email'] ?? 'contato@alm-anestesia.com';
+    $mailFromEmail = filter_var($config['app']['mail_from_email'] ?? '', FILTER_VALIDATE_EMAIL) ? $config['app']['mail_from_email'] : $notificationEmail;
+    $mailFromName = trim((string)($config['app']['mail_from_name'] ?? 'ALM Anestesia')) ?: 'ALM Anestesia';
     $replyTo = filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : $notificationEmail;
     $emailBody = "Nova pré-avaliação recebida pelo site ALM.\n\n"
         . "Paciente ID: {$patientId}\n"
@@ -705,7 +707,7 @@ PROMPT;
         $notificationEmail,
         'APA aguardando avaliação médica final - ALM',
         $emailBody,
-        "From: ALM Anestesia <nao-responder@alm.med.br>\r\nReply-To: {$replyTo}\r\nContent-Type: text/plain; charset=UTF-8"
+        "From: {$mailFromName} <{$mailFromEmail}>\r\nReply-To: {$replyTo}\r\nContent-Type: text/plain; charset=UTF-8"
     );
 
     if (!empty($config['whatsapp']['notify_team_on_submit'])) {
