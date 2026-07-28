@@ -1,12 +1,13 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/config/bootstrap.php';
+const ALM_API_VERSION = '2026-07-28-pre-assessment-guarded-notices';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $path = preg_replace('#^/api#', '', $path) ?: '/';
 if ($method === 'OPTIONS') { http_response_code(204); exit; }
-if ($method === 'GET' && $path === '/health') respond(['status' => 'ok', 'app' => 'alm-api']);
+if ($method === 'GET' && $path === '/health') respond(['status' => 'ok', 'app' => 'alm-api', 'version' => ALM_API_VERSION]);
 function ensurePreAssessmentStorage(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS patients (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -462,6 +463,7 @@ PROMPT;
     respond(['data' => $guidance]);
 }
 if ($method === 'POST' && $path === '/pre-assessment') {
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_payload';
     $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
     if (!is_array($payload)) {
         respond(['error' => 'Dados inválidos'], 400);
@@ -499,6 +501,7 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         respond(['error' => 'Informe uma data de nascimento válida.'], 422);
     }
 
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_storage';
     ensurePreAssessmentStorage();
     db()->exec("CREATE TABLE IF NOT EXISTS submission_rate_limits (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -513,6 +516,7 @@ if ($method === 'POST' && $path === '/pre-assessment') {
         ['hash' => hash('sha256', 'pre-assessment-ip:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown')), 'limit' => 5],
         ['hash' => hash('sha256', 'pre-assessment-cpf:' . $cpfDigits), 'limit' => 3],
     ];
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_rate_limit';
     foreach ($rateScopes as $scope) {
         $stmt = db()->prepare('SELECT attempts, first_seen_at FROM submission_rate_limits WHERE scope_hash=? LIMIT 1');
         $stmt->execute([$scope['hash']]);
@@ -536,6 +540,7 @@ if ($method === 'POST' && $path === '/pre-assessment') {
     $surgeryDate = $field('surgeryDate', 20);
     $surgeryDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', $surgeryDate) ? $surgeryDate : null;
 
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_patient_upsert';
     $patientStmt = db()->prepare("INSERT INTO patients (
         name, cpf, birth_date, whatsapp, email, address, city, consent_accepted_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
@@ -559,6 +564,7 @@ if ($method === 'POST' && $path === '/pre-assessment') {
     ]);
     $patientId = (int)db()->lastInsertId();
 
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_insert_assessment';
     $stmt = db()->prepare("INSERT INTO pre_anesthetic_assessments (
         patient_id, surgery_date, surgeon_name, hospital, procedure_name, anesthesia_type,
         allergies, previous_surgeries, current_medications, known_conditions, smoking, alcohol_use,
@@ -594,6 +600,7 @@ if ($method === 'POST' && $path === '/pre-assessment') {
     $reportStatus = 'pending';
     $apiKey = trim((string)($config['openai']['api_key'] ?? ''));
     if ($apiKey !== '' && !str_starts_with($apiKey, 'COLOQUE_') && function_exists('curl_init')) {
+        $GLOBALS['alm_error_stage'] = 'pre_assessment_openai';
         $birthDateObject = new DateTimeImmutable($birthDate);
         $age = $birthDateObject->diff(new DateTimeImmutable('today'))->y;
         $reportData = [
@@ -674,6 +681,7 @@ PROMPT;
         }
     }
 
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_report_update';
     if ($aiReport) {
         $reportStatus = 'generated';
         $updateStmt = db()->prepare("UPDATE pre_anesthetic_assessments SET ai_report=?, ai_report_generated_at=NOW(), report_status='generated' WHERE id=?");
@@ -684,6 +692,7 @@ PROMPT;
         $updateStmt->execute([$assessmentId]);
     }
 
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_email_prepare';
     $notificationEmail = $config['app']['notification_email'] ?? 'contato@alm-anestesia.com';
     $mailFromEmail = filter_var($config['app']['mail_from_email'] ?? '', FILTER_VALIDATE_EMAIL) ? $config['app']['mail_from_email'] : $notificationEmail;
     $mailFromName = trim((string)($config['app']['mail_from_name'] ?? 'ALM Anestesia')) ?: 'ALM Anestesia';
@@ -703,6 +712,7 @@ PROMPT;
         . "Status do relatório OpenAI: {$reportStatus}\n\n"
         . "RELATÓRIO / MINUTA PARA REVISÃO MÉDICA FINAL\n\n"
         . ($aiReport ?: 'Relatório não gerado automaticamente. Revisar dados salvos no banco.');
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_email_notice';
     try {
         @mail(
             $notificationEmail,
@@ -714,6 +724,7 @@ PROMPT;
         error_log('Pre-assessment email notification failed: ' . $exception->getMessage());
     }
 
+    $GLOBALS['alm_error_stage'] = 'pre_assessment_whatsapp_notice';
     try {
         if (!empty($config['whatsapp']['notify_team_on_submit'])) {
             $teamMessage = "ALM Anestesia: nova pré-avaliação recebida. APA #{$assessmentId}. Pré-laudo: {$reportStatus}. Aguardando avaliação médica final em " . siteUrl('/admin');
@@ -727,6 +738,7 @@ PROMPT;
         error_log('Pre-assessment WhatsApp notification failed: ' . $exception->getMessage());
     }
 
+    $GLOBALS['alm_error_stage'] = null;
     respond(['data' => [
         'id' => $assessmentId,
         'patientId' => $patientId,

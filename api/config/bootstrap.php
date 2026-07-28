@@ -155,7 +155,11 @@ function sendTeamWhatsAppNotice(string $message): void {
 }
 set_exception_handler(function (Throwable $exception) use ($config): void {
     error_log($exception->getMessage());
-    respond([
+    $response = [
         'error' => $config['app']['debug'] ? $exception->getMessage() : 'Erro interno no servidor',
-    ], 500);
+    ];
+    if (!empty($GLOBALS['alm_error_stage'])) {
+        $response['stage'] = $GLOBALS['alm_error_stage'];
+    }
+    respond($response, 500);
 });
