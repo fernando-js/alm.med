@@ -703,20 +703,28 @@ PROMPT;
         . "Status do relatório OpenAI: {$reportStatus}\n\n"
         . "RELATÓRIO / MINUTA PARA REVISÃO MÉDICA FINAL\n\n"
         . ($aiReport ?: 'Relatório não gerado automaticamente. Revisar dados salvos no banco.');
-    @mail(
-        $notificationEmail,
-        'APA aguardando avaliação médica final - ALM',
-        $emailBody,
-        "From: {$mailFromName} <{$mailFromEmail}>\r\nReply-To: {$replyTo}\r\nContent-Type: text/plain; charset=UTF-8"
-    );
-
-    if (!empty($config['whatsapp']['notify_team_on_submit'])) {
-        $teamMessage = "ALM Anestesia: nova pré-avaliação recebida. APA #{$assessmentId}. Pré-laudo: {$reportStatus}. Aguardando avaliação médica final em " . siteUrl('/admin');
-        sendTeamWhatsAppNotice($teamMessage);
+    try {
+        @mail(
+            $notificationEmail,
+            'APA aguardando avaliação médica final - ALM',
+            $emailBody,
+            "From: {$mailFromName} <{$mailFromEmail}>\r\nReply-To: {$replyTo}\r\nContent-Type: text/plain; charset=UTF-8"
+        );
+    } catch (Throwable $exception) {
+        error_log('Pre-assessment email notification failed: ' . $exception->getMessage());
     }
 
-    if (!empty($config['whatsapp']['notify_patient_on_submit'])) {
-        sendWhatsAppNotice($whatsapp, 'ALM Anestesia: recebemos seus dados para pré-avaliação. O pré-laudo aguarda avaliação médica final da equipe.');
+    try {
+        if (!empty($config['whatsapp']['notify_team_on_submit'])) {
+            $teamMessage = "ALM Anestesia: nova pré-avaliação recebida. APA #{$assessmentId}. Pré-laudo: {$reportStatus}. Aguardando avaliação médica final em " . siteUrl('/admin');
+            sendTeamWhatsAppNotice($teamMessage);
+        }
+
+        if (!empty($config['whatsapp']['notify_patient_on_submit'])) {
+            sendWhatsAppNotice($whatsapp, 'ALM Anestesia: recebemos seus dados para pré-avaliação. O pré-laudo aguarda avaliação médica final da equipe.');
+        }
+    } catch (Throwable $exception) {
+        error_log('Pre-assessment WhatsApp notification failed: ' . $exception->getMessage());
     }
 
     respond(['data' => [

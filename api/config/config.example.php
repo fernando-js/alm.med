@@ -24,6 +24,7 @@ return [
         'base_url' => 'https://SEU_SUBDOMINIO.uazapi.com',
         'token' => 'COLOQUE_O_TOKEN_DA_INSTANCIA_UAZAPI',
         'send_text_path' => '/send/text',
+        'timeout_seconds' => 8,
         'team_numbers' => [
             '5533987128010',
         ],
