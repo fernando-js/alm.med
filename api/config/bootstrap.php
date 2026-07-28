@@ -77,7 +77,7 @@ function requireAdmin(): array {
 }
 function requireAdminRole(): array {
     $admin = requireAdmin();
-    if (($admin['role'] ?? '') !== 'admin') {
+    if (($admin['role'] ?? 'admin') !== 'admin') {
         respond(['error' => 'Acesso restrito ao administrador.'], 403);
     }
 
