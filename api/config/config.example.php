@@ -17,4 +17,15 @@ return [
         'api_key' => 'COLOQUE_A_CHAVE_OPENAI_DIRETAMENTE_NA_HOSTINGER',
         'model' => 'gpt-5',
     ],
+    'whatsapp' => [
+        'enabled' => false,
+        'base_url' => 'https://SEU_SUBDOMINIO.uazapi.com',
+        'token' => 'COLOQUE_O_TOKEN_DA_INSTANCIA_UAZAPI',
+        'send_text_path' => '/send/text',
+        'team_numbers' => [
+            '5533987128010',
+        ],
+        'notify_team_on_submit' => true,
+        'notify_patient_on_submit' => true,
+    ],
 ];

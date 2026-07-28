@@ -56,6 +56,22 @@ function ensurePreAssessmentStorage(): void {
         INDEX idx_pre_anesthetic_status_created (status, created_at),
         CONSTRAINT fk_pre_anesthetic_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    db()->exec("CREATE TABLE IF NOT EXISTS patient_access_tokens (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        patient_id BIGINT UNSIGNED NOT NULL,
+        assessment_id BIGINT UNSIGNED NOT NULL,
+        token_hash CHAR(64) NOT NULL UNIQUE,
+        purpose ENUM('status') NOT NULL DEFAULT 'status',
+        expires_at DATETIME NOT NULL,
+        access_count INT UNSIGNED NOT NULL DEFAULT 0,
+        last_accessed_at DATETIME NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_patient_access_assessment (assessment_id),
+        INDEX idx_patient_access_expires (expires_at),
+        CONSTRAINT fk_patient_access_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+        CONSTRAINT fk_patient_access_assessment FOREIGN KEY (assessment_id) REFERENCES pre_anesthetic_assessments(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
 
 function ensureAdminStorage(): void {
@@ -63,9 +79,20 @@ function ensureAdminStorage(): void {
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         email VARCHAR(190) NOT NULL UNIQUE,
+        role ENUM('admin','secretaria') NOT NULL DEFAULT 'admin',
         password_hash VARCHAR(255) NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    addColumnIfMissing('admin_users', 'role', "role ENUM('admin','secretaria') NOT NULL DEFAULT 'admin' AFTER email");
+}
+
+function createPatientAccessUrl(int $patientId, int $assessmentId): string {
+    ensurePreAssessmentStorage();
+    $token = bin2hex(random_bytes(32));
+    $stmt = db()->prepare("INSERT INTO patient_access_tokens (patient_id, assessment_id, token_hash, expires_at) VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 48 HOUR))");
+    $stmt->execute([$patientId, $assessmentId, hash('sha256', $token)]);
+
+    return siteUrl('/paciente/acesso?token=' . rawurlencode($token));
 }
 
 if ($method === 'POST' && $path === '/admin/setup') {
@@ -90,8 +117,8 @@ if ($method === 'POST' && $path === '/admin/setup') {
         respond(['error' => 'Informe nome, e-mail válido e senha com pelo menos 10 caracteres.'], 422);
     }
 
-    $stmt = db()->prepare('INSERT INTO admin_users (name,email,password_hash) VALUES (?,?,?)');
-    $stmt->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT)]);
+    $stmt = db()->prepare('INSERT INTO admin_users (name,email,role,password_hash) VALUES (?,?,?,?)');
+    $stmt->execute([$name, $email, 'admin', password_hash($password, PASSWORD_DEFAULT)]);
     respond(['data' => ['created' => true]]);
 }
 
@@ -102,7 +129,7 @@ if ($method === 'POST' && $path === '/admin/login') {
 
     $email = trim((string)($payload['email'] ?? ''));
     $password = (string)($payload['password'] ?? '');
-    $stmt = db()->prepare('SELECT id,name,email,password_hash FROM admin_users WHERE email=? LIMIT 1');
+    $stmt = db()->prepare('SELECT id,name,email,role,password_hash FROM admin_users WHERE email=? LIMIT 1');
     $stmt->execute([$email]);
     $admin = $stmt->fetch();
 
@@ -111,7 +138,7 @@ if ($method === 'POST' && $path === '/admin/login') {
     }
 
     session_regenerate_id(true);
-    $_SESSION['admin_user'] = ['id' => (int)$admin['id'], 'name' => $admin['name'], 'email' => $admin['email']];
+    $_SESSION['admin_user'] = ['id' => (int)$admin['id'], 'name' => $admin['name'], 'email' => $admin['email'], 'role' => $admin['role'] ?? 'admin'];
     respond(['data' => $_SESSION['admin_user']]);
 }
 
@@ -127,6 +154,44 @@ if ($method === 'POST' && $path === '/admin/logout') {
 
 if ($method === 'GET' && $path === '/admin/session') {
     respond(['data' => ['user' => $_SESSION['admin_user'] ?? null]]);
+}
+
+if ($method === 'GET' && $path === '/admin/users') {
+    requireAdminRole();
+    ensureAdminStorage();
+    $stmt = db()->query('SELECT id,name,email,role,created_at FROM admin_users ORDER BY created_at ASC, id ASC');
+    respond(['data' => $stmt->fetchAll()]);
+}
+
+if ($method === 'POST' && $path === '/admin/users') {
+    requireAdminRole();
+    ensureAdminStorage();
+    $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
+    if (!is_array($payload)) respond(['error' => 'Dados inválidos'], 400);
+
+    $name = trim(mb_substr((string)($payload['name'] ?? ''), 0, 100));
+    $email = trim(mb_substr((string)($payload['email'] ?? ''), 0, 190));
+    $role = (string)($payload['role'] ?? 'secretaria');
+    $password = (string)($payload['password'] ?? '');
+
+    if (!in_array($role, ['admin', 'secretaria'], true)) {
+        respond(['error' => 'Perfil inválido.'], 422);
+    }
+    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($password) < 10) {
+        respond(['error' => 'Informe nome, e-mail válido e senha com pelo menos 10 caracteres.'], 422);
+    }
+
+    try {
+        $stmt = db()->prepare('INSERT INTO admin_users (name,email,role,password_hash) VALUES (?,?,?,?)');
+        $stmt->execute([$name, $email, $role, password_hash($password, PASSWORD_DEFAULT)]);
+    } catch (PDOException $exception) {
+        if (($exception->errorInfo[1] ?? null) === 1062) {
+            respond(['error' => 'Já existe um usuário com este e-mail.'], 409);
+        }
+        throw $exception;
+    }
+
+    respond(['data' => ['created' => true]]);
 }
 
 if ($method === 'GET' && $path === '/admin/pre-assessments') {
@@ -154,6 +219,71 @@ if ($method === 'GET' && preg_match('#^/admin/pre-assessments/(\d+)$#', $path, $
     $stmt->execute([(int)$matches[1]]);
     $assessment = $stmt->fetch();
     $assessment ? respond(['data' => $assessment]) : respond(['error' => 'Avaliação não encontrada'], 404);
+}
+
+if ($method === 'POST' && preg_match('#^/admin/pre-assessments/(\d+)/mark-reviewed$#', $path, $matches)) {
+    requireAdmin();
+    ensurePreAssessmentStorage();
+    $stmt = db()->prepare("SELECT a.id, a.patient_id, a.procedure_name, a.status, p.whatsapp
+        FROM pre_anesthetic_assessments a
+        INNER JOIN patients p ON p.id = a.patient_id
+        WHERE a.id=?
+        LIMIT 1");
+    $stmt->execute([(int)$matches[1]]);
+    $assessment = $stmt->fetch();
+    if (!$assessment) respond(['error' => 'Avaliação não encontrada'], 404);
+
+    $updateStmt = db()->prepare("UPDATE pre_anesthetic_assessments SET status='reviewed' WHERE id=?");
+    $updateStmt->execute([(int)$assessment['id']]);
+    $accessUrl = createPatientAccessUrl((int)$assessment['patient_id'], (int)$assessment['id']);
+
+    $message = "ALM Anestesia: sua pré-avaliação foi revisada pela equipe médica. Acesse o status por este link temporário: {$accessUrl}";
+    $sent = sendWhatsAppNotice((string)$assessment['whatsapp'], $message);
+
+    respond(['data' => [
+        'reviewed' => true,
+        'whatsappSent' => $sent,
+        'patientAccessUrl' => $accessUrl,
+    ]]);
+}
+
+if ($method === 'GET' && $path === '/patient/status') {
+    ensurePreAssessmentStorage();
+    $token = trim((string)($_GET['token'] ?? ''));
+    if ($token === '') respond(['error' => 'Link inválido.'], 400);
+
+    $stmt = db()->prepare("SELECT t.id AS token_id, t.expires_at, t.access_count,
+        a.id AS assessment_id, a.status, a.report_status, a.updated_at
+        FROM patient_access_tokens t
+        INNER JOIN pre_anesthetic_assessments a ON a.id = t.assessment_id
+        WHERE t.token_hash=?
+        LIMIT 1");
+    $stmt->execute([hash('sha256', $token)]);
+    $access = $stmt->fetch();
+
+    if (!$access || strtotime((string)$access['expires_at']) < time() || (int)$access['access_count'] >= 10) {
+        respond(['error' => 'Este link expirou. Entre em contato com a ALM Anestesia.'], 410);
+    }
+
+    $updateAccess = db()->prepare('UPDATE patient_access_tokens SET access_count=access_count+1, last_accessed_at=NOW() WHERE id=?');
+    $updateAccess->execute([(int)$access['token_id']]);
+
+    $statusLabels = [
+        'awaiting_medical_review' => 'Aguardando avaliação médica final',
+        'reviewed' => 'Avaliação revisada pela equipe médica',
+        'contacted' => 'Contato realizado pela equipe',
+        'archived' => 'Atendimento arquivado',
+        'new' => 'Recebido pela equipe',
+    ];
+
+    respond(['data' => [
+        'assessmentId' => (int)$access['assessment_id'],
+        'status' => $access['status'],
+        'statusLabel' => $statusLabels[$access['status']] ?? 'Em acompanhamento pela equipe',
+        'reportStatus' => $access['report_status'],
+        'updatedAt' => $access['updated_at'],
+        'contactWhatsApp' => 'https://wa.me/5533987128010',
+    ]]);
 }
 
 if ($method === 'POST' && $path === '/medication-guidance') {
@@ -577,6 +707,15 @@ PROMPT;
         $emailBody,
         "From: ALM Anestesia <nao-responder@alm.med.br>\r\nReply-To: {$replyTo}\r\nContent-Type: text/plain; charset=UTF-8"
     );
+
+    if (!empty($config['whatsapp']['notify_team_on_submit'])) {
+        $teamMessage = "ALM Anestesia: nova pré-avaliação recebida. APA #{$assessmentId}. Pré-laudo: {$reportStatus}. Aguardando avaliação médica final em " . siteUrl('/admin');
+        sendTeamWhatsAppNotice($teamMessage);
+    }
+
+    if (!empty($config['whatsapp']['notify_patient_on_submit'])) {
+        sendWhatsAppNotice($whatsapp, 'ALM Anestesia: recebemos seus dados para pré-avaliação. O pré-laudo aguarda avaliação médica final da equipe.');
+    }
 
     respond(['data' => [
         'id' => $assessmentId,

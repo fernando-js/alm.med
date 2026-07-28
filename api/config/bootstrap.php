@@ -75,6 +75,72 @@ function requireAdmin(): array {
 
     return $_SESSION['admin_user'];
 }
+function requireAdminRole(): array {
+    $admin = requireAdmin();
+    if (($admin['role'] ?? '') !== 'admin') {
+        respond(['error' => 'Acesso restrito ao administrador.'], 403);
+    }
+
+    return $admin;
+}
+function siteUrl(string $path = ''): string {
+    global $config;
+    $base = rtrim((string)($config['app']['allowed_origin'] ?? 'https://alm.med.br'), '/');
+    return $base . '/' . ltrim($path, '/');
+}
+function onlyDigits(string $value): string {
+    return preg_replace('/\D+/', '', $value) ?: '';
+}
+function formatWhatsAppNumber(string $value): string {
+    $digits = onlyDigits($value);
+    if ($digits === '') return '';
+    return str_starts_with($digits, '55') ? $digits : '55' . $digits;
+}
+function sendWhatsAppNotice(string $number, string $message): bool {
+    global $config;
+
+    $whatsapp = $config['whatsapp'] ?? [];
+    if (empty($whatsapp['enabled'])) return false;
+    $baseUrl = rtrim((string)($whatsapp['base_url'] ?? ''), '/');
+    $token = trim((string)($whatsapp['token'] ?? ''));
+    $path = '/' . ltrim((string)($whatsapp['send_text_path'] ?? '/send/text'), '/');
+    $to = formatWhatsAppNumber($number);
+
+    if ($baseUrl === '' || $token === '' || $to === '' || !function_exists('curl_init')) return false;
+
+    $payload = [
+        'number' => $to,
+        'text' => $message,
+    ];
+    $ch = curl_init($baseUrl . $path);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'token: ' . $token,
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    curl_exec($ch);
+    $httpStatus = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($httpStatus < 200 || $httpStatus >= 300) {
+        error_log('UAZAPI WhatsApp notice failed: HTTP ' . $httpStatus . ($error ? ' - ' . $error : ''));
+        return false;
+    }
+
+    return true;
+}
+function sendTeamWhatsAppNotice(string $message): void {
+    global $config;
+    foreach (($config['whatsapp']['team_numbers'] ?? []) as $number) {
+        sendWhatsAppNotice((string)$number, $message);
+    }
+}
 set_exception_handler(function (Throwable $exception) use ($config): void {
     error_log($exception->getMessage());
     respond([
