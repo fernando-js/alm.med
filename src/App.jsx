@@ -738,7 +738,7 @@ function MedicationGuidancePage() {
 
   usePageMeta(
     'Conferência de medicamentos pré-operatórios | ALM Anestesia',
-    'Ferramenta de apoio para equipe conferir medicamentos em uso antes da avaliação pré-anestésica, com revisão médica obrigatória.',
+    'Ferramenta de apoio para conferir pausa, manutenção ou necessidade de contexto clínico antes da avaliação pré-anestésica.',
   );
 
   function updateField(event) {
@@ -785,7 +785,7 @@ function MedicationGuidancePage() {
           <ArrowLink href="/agendar">Voltar para agendamento</ArrowLink>
           <span className="regional-hero__eyebrow">Apoio à equipe</span>
           <h1>Conferência de medicamentos antes da cirurgia</h1>
-          <p>Use para identificar medicamentos que precisam de revisão pré-anestésica. A ferramenta não emite prescrição, ordem de suspensão ou liberação cirúrgica.</p>
+          <p>Use para retornar uma orientação objetiva: suspender por alguns dias, não suspender ou completar indicação clínica quando a conduta depende da doença de base.</p>
         </div>
       </section>
       <section className="section">
@@ -797,8 +797,8 @@ function MedicationGuidancePage() {
               <label>Procedimento<input name="procedureName" value={form.procedureName} onChange={updateField} placeholder="Ex.: colecistectomia, endoscopia..." /></label>
               <label>Data prevista<input name="surgeryDate" type="date" value={form.surgeryDate} onChange={updateField} /></label>
               <label>Tipo de anestesia previsto<input name="anesthesiaType" value={form.anesthesiaType} onChange={updateField} placeholder="Se souber" /></label>
-              <label>Medicamentos em uso<textarea name="medications" value={form.medications} onChange={updateField} required placeholder="Um por linha, com dose e horário quando disponível." /></label>
-              <label>Condições relevantes<textarea name="conditions" value={form.conditions} onChange={updateField} placeholder="Ex.: diabetes, stent, fibrilação atrial, doença renal, anticoagulação..." /></label>
+              <label>Medicamentos em uso<textarea name="medications" value={form.medications} onChange={updateField} required placeholder="Um por linha. Ex.: AAS infantil, rivaroxabana, losartana..." /></label>
+              <label>Condições relevantes<textarea name="conditions" value={form.conditions} onChange={updateField} placeholder="Ex.: stent, infarto, AVC, prevenção primária, FA, DRC, diabetes..." /></label>
               <label>Observações<textarea name="observations" value={form.observations} onChange={updateField} placeholder="Dúvida específica, orientação já recebida, exames ou contexto institucional." /></label>
             </fieldset>
             <label className="form-consent">
@@ -816,7 +816,7 @@ function MedicationGuidancePage() {
               <div className="medication-empty">
                 <Pill size={38} aria-hidden="true" />
                 <h2>Resultado da conferência</h2>
-                <p>O retorno virá separado por prioridade, com pontos que devem ser confirmados pelo anestesiologista, cirurgião ou médico prescritor.</p>
+                <p>O retorno prioriza uma conduta curta por medicamento. Medicamentos sem regra local só usam IA como fallback.</p>
               </div>
             ) : (
               <>
@@ -833,20 +833,25 @@ function MedicationGuidancePage() {
                   <h3><ListChecks size={18} aria-hidden="true" /> Medicamentos avaliados</h3>
                   <div className="medication-items">
                     {guidance.medications?.map((item) => (
-                      <article className="medication-item" key={`${item.name}-${item.preliminaryAction}`}>
+                      <article className="medication-item" key={`${item.name}-${item.actionText || item.preliminaryAction}`}>
                         <div>
                           <strong>{item.name}</strong>
-                          <span>{item.preliminaryAction}</span>
+                          <span>{item.actionText || item.preliminaryAction}</span>
                         </div>
+                        <p className="medication-item__timing">{item.timingText || item.timing}</p>
                         <p>{item.reason}</p>
                         <dl>
                           <div>
-                            <dt>Quando</dt>
-                            <dd>{item.timing}</dd>
+                            <dt>Categoria</dt>
+                            <dd>{item.category || 'Medicamento'}</dd>
                           </div>
                           <div>
-                            <dt>Confirmar com</dt>
-                            <dd>{item.confirmWith}</dd>
+                            <dt>Fonte</dt>
+                            <dd>
+                              {item.sourceUrl ? (
+                                <a href={item.sourceUrl} target="_blank" rel="noreferrer">{item.sourceLabel}</a>
+                              ) : item.sourceLabel || item.confirmWith}
+                            </dd>
                           </div>
                         </dl>
                       </article>

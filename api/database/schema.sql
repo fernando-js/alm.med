@@ -94,3 +94,25 @@ CREATE TABLE submission_rate_limits (
   last_seen_at DATETIME NOT NULL,
   INDEX idx_submission_rate_first_seen (first_seen_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE medication_guidance_rules (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  rule_key VARCHAR(120) NOT NULL UNIQUE,
+  category VARCHAR(120) NOT NULL,
+  medication_aliases MEDIUMTEXT NOT NULL,
+  condition_keywords MEDIUMTEXT NOT NULL,
+  requires_condition TINYINT(1) NOT NULL DEFAULT 0,
+  action_label VARCHAR(40) NOT NULL,
+  action_text VARCHAR(180) NOT NULL,
+  timing_text VARCHAR(255) NOT NULL,
+  suspend_days_min TINYINT UNSIGNED NULL,
+  suspend_days_max TINYINT UNSIGNED NULL,
+  reason TEXT NOT NULL,
+  source_label VARCHAR(180) NOT NULL,
+  source_url VARCHAR(255) NOT NULL,
+  priority INT NOT NULL DEFAULT 0,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_medication_guidance_active_priority (active, priority)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

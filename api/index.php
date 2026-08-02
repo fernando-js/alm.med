@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/config/bootstrap.php';
-const ALM_API_VERSION = '2026-07-28-pre-assessment-guarded-notices';
+const ALM_API_VERSION = '2026-08-02-medication-local-rules';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -85,6 +85,381 @@ function ensureAdminStorage(): void {
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     addColumnIfMissing('admin_users', 'role', "role ENUM('admin','secretaria') NOT NULL DEFAULT 'admin' AFTER email");
+}
+
+function medicationGuidanceRuleSeeds(): array {
+    $file = __DIR__ . '/data/medication_guidance_rules.php';
+    if (!is_file($file)) return [];
+
+    $rules = require $file;
+    return is_array($rules) ? $rules : [];
+}
+
+function ensureMedicationGuidanceStorage(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS medication_guidance_rules (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        rule_key VARCHAR(120) NOT NULL UNIQUE,
+        category VARCHAR(120) NOT NULL,
+        medication_aliases MEDIUMTEXT NOT NULL,
+        condition_keywords MEDIUMTEXT NOT NULL,
+        requires_condition TINYINT(1) NOT NULL DEFAULT 0,
+        action_label VARCHAR(40) NOT NULL,
+        action_text VARCHAR(180) NOT NULL,
+        timing_text VARCHAR(255) NOT NULL,
+        suspend_days_min TINYINT UNSIGNED NULL,
+        suspend_days_max TINYINT UNSIGNED NULL,
+        reason TEXT NOT NULL,
+        source_label VARCHAR(180) NOT NULL,
+        source_url VARCHAR(255) NOT NULL,
+        priority INT NOT NULL DEFAULT 0,
+        active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_medication_guidance_active_priority (active, priority)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    seedMedicationGuidanceRules();
+}
+
+function seedMedicationGuidanceRules(): void {
+    static $seeded = false;
+    if ($seeded) return;
+    $seeded = true;
+
+    $rules = medicationGuidanceRuleSeeds();
+    if (!$rules) return;
+
+    $stmt = db()->prepare("INSERT INTO medication_guidance_rules (
+        rule_key, category, medication_aliases, condition_keywords, requires_condition,
+        action_label, action_text, timing_text, suspend_days_min, suspend_days_max,
+        reason, source_label, source_url, priority, active
+    ) VALUES (
+        :rule_key, :category, :medication_aliases, :condition_keywords, :requires_condition,
+        :action_label, :action_text, :timing_text, :suspend_days_min, :suspend_days_max,
+        :reason, :source_label, :source_url, :priority, 1
+    ) ON DUPLICATE KEY UPDATE
+        category=VALUES(category),
+        medication_aliases=VALUES(medication_aliases),
+        condition_keywords=VALUES(condition_keywords),
+        requires_condition=VALUES(requires_condition),
+        action_label=VALUES(action_label),
+        action_text=VALUES(action_text),
+        timing_text=VALUES(timing_text),
+        suspend_days_min=VALUES(suspend_days_min),
+        suspend_days_max=VALUES(suspend_days_max),
+        reason=VALUES(reason),
+        source_label=VALUES(source_label),
+        source_url=VALUES(source_url),
+        priority=VALUES(priority),
+        active=1");
+
+    foreach ($rules as $rule) {
+        $stmt->execute([
+            ':rule_key' => (string)$rule['rule_key'],
+            ':category' => (string)$rule['category'],
+            ':medication_aliases' => json_encode($rule['medication_aliases'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':condition_keywords' => json_encode($rule['condition_keywords'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':requires_condition' => !empty($rule['requires_condition']) ? 1 : 0,
+            ':action_label' => (string)$rule['action_label'],
+            ':action_text' => (string)$rule['action_text'],
+            ':timing_text' => (string)$rule['timing_text'],
+            ':suspend_days_min' => $rule['suspend_days_min'],
+            ':suspend_days_max' => $rule['suspend_days_max'],
+            ':reason' => (string)$rule['reason'],
+            ':source_label' => (string)$rule['source_label'],
+            ':source_url' => (string)$rule['source_url'],
+            ':priority' => (int)($rule['priority'] ?? 0),
+        ]);
+    }
+}
+
+function normalizeClinicalText(string $value): string {
+    $value = mb_strtolower(trim($value), 'UTF-8');
+    $ascii = function_exists('iconv') ? iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) : false;
+    $value = is_string($ascii) ? $ascii : $value;
+    $value = preg_replace('/[^a-z0-9]+/u', ' ', $value) ?: '';
+    return trim(preg_replace('/\s+/', ' ', $value) ?: '');
+}
+
+function decodeRuleList(string $value): array {
+    $decoded = json_decode($value, true);
+    return is_array($decoded) ? array_values(array_filter(array_map('strval', $decoded))) : [];
+}
+
+function splitMedicationLines(string $medications): array {
+    $parts = preg_split('/[\r\n;]+/', $medications) ?: [];
+    $lines = [];
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part !== '') $lines[] = mb_substr($part, 0, 220);
+    }
+
+    if (count($lines) === 1 && str_contains($lines[0], ',')) {
+        $commaParts = preg_split('/,+/', $lines[0]) ?: [];
+        $lines = [];
+        foreach ($commaParts as $part) {
+            $part = trim($part);
+            if ($part !== '') $lines[] = mb_substr($part, 0, 220);
+        }
+    }
+
+    return array_slice(array_values(array_unique($lines)), 0, 30);
+}
+
+function clinicalTextContainsAlias(string $normalizedHaystack, string $alias): bool {
+    $normalizedAlias = normalizeClinicalText($alias);
+    if ($normalizedAlias === '') return false;
+
+    if (strlen($normalizedAlias) <= 4) {
+        return (bool)preg_match('/(^|[^a-z0-9])' . preg_quote($normalizedAlias, '/') . '([^a-z0-9]|$)/', $normalizedHaystack);
+    }
+
+    return str_contains($normalizedHaystack, $normalizedAlias);
+}
+
+function clinicalTextContainsAny(string $normalizedHaystack, array $keywords): bool {
+    foreach ($keywords as $keyword) {
+        if (clinicalTextContainsAlias($normalizedHaystack, $keyword)) return true;
+    }
+
+    return false;
+}
+
+function loadMedicationGuidanceRules(): array {
+    ensureMedicationGuidanceStorage();
+    $stmt = db()->query('SELECT * FROM medication_guidance_rules WHERE active=1 ORDER BY priority DESC, id ASC');
+    return $stmt->fetchAll();
+}
+
+function findMedicationRule(string $medicationLine, string $contextText, array $rules): ?array {
+    $normalizedLine = normalizeClinicalText($medicationLine);
+    $normalizedContext = normalizeClinicalText($medicationLine . ' ' . $contextText);
+
+    foreach ($rules as $rule) {
+        $aliases = decodeRuleList((string)$rule['medication_aliases']);
+        if (!clinicalTextContainsAny($normalizedLine, $aliases)) continue;
+
+        $conditionKeywords = decodeRuleList((string)$rule['condition_keywords']);
+        if ((int)$rule['requires_condition'] === 1 && !clinicalTextContainsAny($normalizedContext, $conditionKeywords)) {
+            continue;
+        }
+
+        return $rule;
+    }
+
+    return null;
+}
+
+function medicationItemFromRule(string $medicationLine, array $rule): array {
+    return [
+        'name' => $medicationLine,
+        'category' => $rule['category'],
+        'actionLabel' => $rule['action_label'],
+        'actionText' => $rule['action_text'],
+        'timingText' => $rule['timing_text'],
+        'suspendDaysMin' => isset($rule['suspend_days_min']) ? (int)$rule['suspend_days_min'] : null,
+        'suspendDaysMax' => isset($rule['suspend_days_max']) ? (int)$rule['suspend_days_max'] : null,
+        'reason' => $rule['reason'],
+        'sourceLabel' => $rule['source_label'],
+        'sourceUrl' => $rule['source_url'],
+        'sourceType' => 'table',
+    ];
+}
+
+function unknownMedicationItem(string $medicationLine): array {
+    return [
+        'name' => $medicationLine,
+        'category' => 'Sem regra local',
+        'actionLabel' => 'sem_regra',
+        'actionText' => 'Sem regra cadastrada',
+        'timingText' => 'Completar dados e cadastrar regra local ou usar revisão com IA/anestesiologista.',
+        'suspendDaysMin' => null,
+        'suspendDaysMax' => null,
+        'reason' => 'Medicamento não encontrado na tabela local.',
+        'sourceLabel' => 'Tabela local ALM',
+        'sourceUrl' => '',
+        'sourceType' => 'unmatched',
+    ];
+}
+
+function medicationGuidanceRisk(array $items): array {
+    $labels = array_column($items, 'actionLabel');
+    if (array_intersect($labels, ['verificar_contexto', 'informar_indicacao', 'sem_regra'])) {
+        return ['attention', 'Completar contexto clínico'];
+    }
+    if (in_array('suspender', $labels, true)) {
+        return ['attention', 'Há medicamentos para pausar'];
+    }
+
+    return ['low', 'Sem pausa pela tabela'];
+}
+
+function buildMedicationGuidanceResponse(array $items, array $unknownLines, bool $usedAi, ?string $aiError = null): array {
+    [$riskLevel, $riskLabel] = medicationGuidanceRisk($items);
+    $tableCount = count(array_filter($items, static fn (array $item): bool => ($item['sourceType'] ?? '') === 'table'));
+    $unknownCount = count($unknownLines);
+
+    $nextSteps = ['Revisar a lista final antes de orientar o paciente.'];
+    if (array_intersect(array_column($items, 'actionLabel'), ['informar_indicacao', 'verificar_contexto'])) {
+        $nextSteps[] = 'Completar indicação clínica, função renal, risco de sangramento/trombose e tipo de anestesia quando solicitado.';
+    }
+    if ($unknownCount > 0 && !$usedAi) {
+        $nextSteps[] = 'Cadastrar novas regras locais para medicamentos não encontrados.';
+    }
+
+    $redFlags = [];
+    if ($aiError) $redFlags[] = $aiError;
+    foreach ($items as $item) {
+        if (in_array($item['category'] ?? '', ['Anticoagulante', 'Antiagregante'], true)) {
+            $redFlags[] = 'Anticoagulante/antiagregante: conferir risco trombótico, sangramento, stent recente e protocolo institucional.';
+            break;
+        }
+    }
+
+    return [
+        'riskLevel' => $riskLevel,
+        'riskLabel' => $riskLabel,
+        'summary' => $unknownCount > 0
+            ? "Tabela local encontrou {$tableCount} item(ns); {$unknownCount} item(ns) ficaram sem regra local."
+            : "Resultado gerado pela tabela local de medicamentos.",
+        'notMedicalOrder' => 'Apoio à triagem: não substitui avaliação médica nem protocolo institucional.',
+        'source' => $usedAi ? 'mixed' : 'table',
+        'medications' => $items,
+        'redFlags' => array_values(array_unique($redFlags)),
+        'nextSteps' => array_values(array_unique($nextSteps)),
+    ];
+}
+
+function requestAiMedicationGuidance(array $caseData, array $unknownLines): array {
+    global $config;
+
+    $apiKey = trim((string)($config['openai']['api_key'] ?? ''));
+    if ($apiKey === '' || str_starts_with($apiKey, 'COLOQUE_')) {
+        return [
+            'items' => array_map('unknownMedicationItem', $unknownLines),
+            'error' => 'OpenAI não configurada; itens sem regra local não foram interpretados por IA.',
+        ];
+    }
+
+    if (!function_exists('curl_init')) {
+        return [
+            'items' => array_map('unknownMedicationItem', $unknownLines),
+            'error' => 'cURL indisponível; itens sem regra local não foram interpretados por IA.',
+        ];
+    }
+
+    $model = trim((string)($config['openai']['model'] ?? 'gpt-5')) ?: 'gpt-5';
+    $schema = [
+        'type' => 'object',
+        'additionalProperties' => false,
+        'required' => ['medications'],
+        'properties' => [
+            'medications' => [
+                'type' => 'array',
+                'items' => [
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => ['name', 'category', 'actionLabel', 'actionText', 'timingText', 'reason'],
+                    'properties' => [
+                        'name' => ['type' => 'string'],
+                        'category' => ['type' => 'string'],
+                        'actionLabel' => ['type' => 'string', 'enum' => ['suspender', 'nao_suspender', 'verificar_contexto', 'informar_indicacao', 'sem_regra']],
+                        'actionText' => ['type' => 'string'],
+                        'timingText' => ['type' => 'string'],
+                        'reason' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $systemPrompt = <<<'PROMPT'
+Você é apoio à triagem pré-anestésica para equipe médica. Responda em português do Brasil, de forma curta.
+Para cada medicamento sem regra local, retorne UMA ação simples:
+- "Suspender" + prazo em dias quando houver conduta perioperatória padronizada.
+- "Não suspender" quando geralmente deve manter.
+- "Informar indicação" quando a conduta depende da doença de base, como AAS.
+- "Verificar contexto" quando depende de função renal, risco de sangramento/trombose, técnica neuraxial, dose ou tipo de procedimento.
+Não escreva textos longos, não emita prescrição final e não invente regra quando o contexto é insuficiente.
+PROMPT;
+
+    $requestBody = [
+        'model' => $model,
+        'input' => [
+            ['role' => 'system', 'content' => [['type' => 'input_text', 'text' => $systemPrompt]]],
+            ['role' => 'user', 'content' => [['type' => 'input_text', 'text' => json_encode([
+                'unknownMedications' => $unknownLines,
+                'caseData' => $caseData,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]]],
+        ],
+        'text' => [
+            'format' => [
+                'type' => 'json_schema',
+                'name' => 'alm_unknown_medication_guidance',
+                'strict' => true,
+                'schema' => $schema,
+            ],
+            'verbosity' => 'low',
+        ],
+        'max_output_tokens' => 1800,
+    ];
+
+    $ch = curl_init('https://api.openai.com/v1/responses');
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($requestBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+    ]);
+    $rawResponse = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $httpStatus = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    if ($rawResponse === false) {
+        return ['items' => array_map('unknownMedicationItem', $unknownLines), 'error' => 'Falha ao consultar IA: ' . $curlError];
+    }
+
+    $openAiPayload = json_decode($rawResponse, true);
+    if ($httpStatus < 200 || $httpStatus >= 300 || !is_array($openAiPayload)) {
+        return ['items' => array_map('unknownMedicationItem', $unknownLines), 'error' => 'IA indisponível para itens sem regra local.'];
+    }
+
+    $jsonText = trim(extractOpenAiOutputText($openAiPayload));
+    if (preg_match('/^```(?:json)?\s*(.*?)\s*```$/s', $jsonText, $matches)) {
+        $jsonText = trim($matches[1]);
+    } elseif (!str_starts_with($jsonText, '{') && preg_match('/\{.*\}/s', $jsonText, $matches)) {
+        $jsonText = trim($matches[0]);
+    }
+
+    $guidance = json_decode($jsonText, true);
+    if (!is_array($guidance) || !isset($guidance['medications']) || !is_array($guidance['medications'])) {
+        return ['items' => array_map('unknownMedicationItem', $unknownLines), 'error' => 'IA retornou formato inesperado para itens sem regra local.'];
+    }
+
+    $items = [];
+    foreach ($guidance['medications'] as $item) {
+        if (!is_array($item)) continue;
+        $items[] = [
+            'name' => (string)($item['name'] ?? 'Medicamento não identificado'),
+            'category' => (string)($item['category'] ?? 'IA'),
+            'actionLabel' => (string)($item['actionLabel'] ?? 'verificar_contexto'),
+            'actionText' => (string)($item['actionText'] ?? 'Verificar contexto'),
+            'timingText' => (string)($item['timingText'] ?? 'Sem prazo definido.'),
+            'suspendDaysMin' => null,
+            'suspendDaysMax' => null,
+            'reason' => (string)($item['reason'] ?? 'Item não encontrado na tabela local.'),
+            'sourceLabel' => 'OpenAI fallback',
+            'sourceUrl' => '',
+            'sourceType' => 'ai',
+        ];
+    }
+
+    return ['items' => $items ?: array_map('unknownMedicationItem', $unknownLines), 'error' => null];
 }
 
 function createPatientAccessUrl(int $patientId, int $assessmentId): string {
@@ -306,16 +681,6 @@ if ($method === 'POST' && $path === '/medication-guidance') {
         respond(['error' => 'Código de acesso inválido.'], 403);
     }
 
-    $apiKey = trim((string)($config['openai']['api_key'] ?? ''));
-    if ($apiKey === '' || str_starts_with($apiKey, 'COLOQUE_')) {
-        respond(['error' => 'Integração OpenAI não configurada no servidor.'], 503);
-    }
-
-    if (!function_exists('curl_init')) {
-        respond(['error' => 'Extensão cURL do PHP indisponível no servidor.'], 503);
-    }
-
-    $model = trim((string)($config['openai']['model'] ?? 'gpt-5')) ?: 'gpt-5';
     $caseData = [
         'medications' => $medications,
         'procedureName' => $field('procedureName', 220),
@@ -325,142 +690,35 @@ if ($method === 'POST' && $path === '/medication-guidance') {
         'observations' => $field('observations', 2500),
     ];
 
-    $schema = [
-        'type' => 'object',
-        'additionalProperties' => false,
-        'required' => ['riskLevel', 'riskLabel', 'summary', 'notMedicalOrder', 'medications', 'redFlags', 'nextSteps'],
-        'properties' => [
-            'riskLevel' => ['type' => 'string', 'enum' => ['low', 'attention', 'high']],
-            'riskLabel' => ['type' => 'string'],
-            'summary' => ['type' => 'string'],
-            'notMedicalOrder' => ['type' => 'string'],
-            'medications' => [
-                'type' => 'array',
-                'items' => [
-                    'type' => 'object',
-                    'additionalProperties' => false,
-                    'required' => ['name', 'preliminaryAction', 'reason', 'timing', 'confirmWith'],
-                    'properties' => [
-                        'name' => ['type' => 'string'],
-                        'preliminaryAction' => [
-                            'type' => 'string',
-                            'enum' => [
-                                'geralmente manter, confirmar na avaliação',
-                                'avaliar pausa ou ajuste com o anestesiologista',
-                                'confirmar com cirurgião ou médico prescritor',
-                                'atenção prioritária antes de orientar o paciente',
-                                'informação insuficiente',
-                            ],
-                        ],
-                        'reason' => ['type' => 'string'],
-                        'timing' => ['type' => 'string'],
-                        'confirmWith' => ['type' => 'string'],
-                    ],
-                ],
-            ],
-            'redFlags' => ['type' => 'array', 'items' => ['type' => 'string']],
-            'nextSteps' => ['type' => 'array', 'items' => ['type' => 'string']],
-        ],
-    ];
-
-    $systemPrompt = <<<'PROMPT'
-Você é um assistente de apoio à triagem pré-anestésica para a equipe ALM Anestesia, em português do Brasil.
-Objetivo: identificar medicamentos que podem exigir revisão, ajuste, continuidade ou possível pausa antes de cirurgia/procedimento.
-Limites obrigatórios:
-- Não emita prescrição, ordem final de suspensão, liberação cirúrgica ou diagnóstico.
-- Sempre deixe claro que a conduta deve ser confirmada por anestesiologista, cirurgião e/ou médico prescritor.
-- Seja conservador quando houver anticoagulantes, antiagregantes, insulinas, antidiabéticos, agonistas GLP-1, inibidores SGLT2, fitoterápicos, imunossupressores, anticonvulsivantes, psicotrópicos, opioides, corticoides ou medicamentos de alto risco.
-- Se faltarem dose, indicação, função renal, risco trombótico, tipo de procedimento ou data, marque como informação insuficiente.
-- Não invente protocolo institucional nem intervalo exato quando o contexto não permitir; peça confirmação do protocolo local.
-- Oriente a equipe a não repassar a resposta ao paciente como ordem médica.
-PROMPT;
-
-    $requestBody = [
-        'model' => $model,
-        'input' => [
-            [
-                'role' => 'system',
-                'content' => [
-                    ['type' => 'input_text', 'text' => $systemPrompt],
-                ],
-            ],
-            [
-                'role' => 'user',
-                'content' => [
-                    ['type' => 'input_text', 'text' => 'Dados do caso para conferência preliminar: ' . json_encode($caseData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
-                ],
-            ],
-        ],
-        'text' => [
-            'format' => [
-                'type' => 'json_schema',
-                'name' => 'alm_medication_guidance',
-                'strict' => true,
-                'schema' => $schema,
-            ],
-            'verbosity' => 'low',
-        ],
-        'max_output_tokens' => 4000,
-    ];
-
-    $ch = curl_init('https://api.openai.com/v1/responses');
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => [
-            'Authorization: Bearer ' . $apiKey,
-            'Content-Type: application/json',
-        ],
-        CURLOPT_POSTFIELDS => json_encode($requestBody, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 40,
+    $contextText = implode(' ', [
+        $caseData['procedureName'],
+        $caseData['anesthesiaType'],
+        $caseData['conditions'],
+        $caseData['observations'],
     ]);
-    $rawResponse = curl_exec($ch);
-    $curlError = curl_error($ch);
-    $httpStatus = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-    curl_close($ch);
+    $rules = loadMedicationGuidanceRules();
+    $items = [];
+    $unknownLines = [];
 
-    if ($rawResponse === false) {
-        respond(['error' => 'Falha ao consultar a OpenAI: ' . $curlError], 502);
-    }
-
-    $openAiPayload = json_decode($rawResponse, true);
-    if ($httpStatus < 200 || $httpStatus >= 300 || !is_array($openAiPayload)) {
-        $apiMessage = is_array($openAiPayload) ? ($openAiPayload['error']['message'] ?? 'Resposta inválida da OpenAI.') : 'Resposta inválida da OpenAI.';
-        respond(['error' => $config['app']['debug'] ? $apiMessage : 'Não foi possível gerar a conferência agora.'], 502);
-    }
-
-    if (($openAiPayload['status'] ?? '') === 'incomplete') {
-        error_log('OpenAI incomplete medication guidance response: ' . json_encode($openAiPayload['incomplete_details'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        respond(['error' => 'A conferência ficou incompleta. Tente novamente com menos medicamentos ou menos observações.'], 502);
-    }
-
-    $outputText = '';
-    if (isset($openAiPayload['output_text']) && is_string($openAiPayload['output_text'])) {
-        $outputText = $openAiPayload['output_text'];
-    } else {
-        foreach (($openAiPayload['output'] ?? []) as $output) {
-            foreach (($output['content'] ?? []) as $content) {
-                if (isset($content['text']) && is_string($content['text'])) {
-                    $outputText .= $content['text'];
-                }
-            }
+    foreach (splitMedicationLines($medications) as $medicationLine) {
+        $rule = findMedicationRule($medicationLine, $contextText, $rules);
+        if ($rule) {
+            $items[] = medicationItemFromRule($medicationLine, $rule);
+        } else {
+            $unknownLines[] = $medicationLine;
         }
     }
 
-    $jsonText = trim($outputText);
-    if (preg_match('/^```(?:json)?\s*(.*?)\s*```$/s', $jsonText, $matches)) {
-        $jsonText = trim($matches[1]);
-    } elseif (!str_starts_with($jsonText, '{') && preg_match('/\{.*\}/s', $jsonText, $matches)) {
-        $jsonText = trim($matches[0]);
+    $usedAi = false;
+    $aiError = null;
+    if ($unknownLines) {
+        $aiGuidance = requestAiMedicationGuidance($caseData, $unknownLines);
+        $usedAi = count(array_filter($aiGuidance['items'], static fn (array $item): bool => ($item['sourceType'] ?? '') === 'ai')) > 0;
+        $aiError = $aiGuidance['error'] ?? null;
+        $items = array_merge($items, $aiGuidance['items']);
     }
 
-    $guidance = json_decode($jsonText, true);
-    if (!is_array($guidance)) {
-        error_log('OpenAI unexpected medication guidance output: ' . mb_substr($outputText ?: $rawResponse, 0, 2000));
-        respond(['error' => 'A conferência retornou em formato inesperado. Tente novamente.'], 502);
-    }
-
-    respond(['data' => $guidance]);
+    respond(['data' => buildMedicationGuidanceResponse($items, $unknownLines, $usedAi, $aiError)]);
 }
 if ($method === 'POST' && $path === '/pre-assessment') {
     $GLOBALS['alm_error_stage'] = 'pre_assessment_payload';

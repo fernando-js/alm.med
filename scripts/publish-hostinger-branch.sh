@@ -43,10 +43,12 @@ cp "$ROOT_DIR/dist/sitemap.xml" "$WORKTREE_DIR/sitemap.xml"
 cp -R "$ROOT_DIR/dist/assets" "$WORKTREE_DIR/assets"
 
 mkdir -p "$WORKTREE_DIR/api/config"
+mkdir -p "$WORKTREE_DIR/api/data"
 cp "$ROOT_DIR/api/.htaccess" "$WORKTREE_DIR/api/.htaccess"
 cp "$ROOT_DIR/api/index.php" "$WORKTREE_DIR/api/index.php"
 cp "$ROOT_DIR/api/config/bootstrap.php" "$WORKTREE_DIR/api/config/bootstrap.php"
 cp "$ROOT_DIR/api/config/config.example.php" "$WORKTREE_DIR/api/config/config.example.php"
+cp "$ROOT_DIR/api/data/medication_guidance_rules.php" "$WORKTREE_DIR/api/data/medication_guidance_rules.php"
 
 cat > "$WORKTREE_DIR/README.md" <<'DEPLOY_README'
 # ALM Anestesia - Deploy
