@@ -1,6 +1,6 @@
 export const navigationItems = [
   ['Início', 'inicio'],
-  ['A ALM', 'a-alm'],
+  ['ALM', 'a-alm'],
   ['Serviços', 'servicos'],
   ['Conteúdos', 'conteudos'],
   ['Plataformas', 'plataformas'],

@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchPosts } from '../services/posts';
 
-export function usePosts(fallbackArticles, limit = null) {
+export function usePosts(fallbackArticles, limit = null, searchTerm = '') {
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
   const fallbackList = useMemo(
-    () => fallbackArticles.slice(0, limit || undefined),
-    [fallbackArticles, limit],
+    () => fallbackArticles
+      .filter((article) => {
+        if (!normalizedSearchTerm) return true;
+
+        return [article.title, article.excerpt, article.audience]
+          .filter(Boolean)
+          .some((value) => value.toLowerCase().includes(normalizedSearchTerm));
+      })
+      .slice(0, limit || undefined),
+    [fallbackArticles, limit, normalizedSearchTerm],
   );
   const [page, setPage] = useState(1);
   const [state, setState] = useState({
@@ -15,19 +24,23 @@ export function usePosts(fallbackArticles, limit = null) {
   });
 
   useEffect(() => {
+    setPage(1);
+  }, [normalizedSearchTerm]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     setState((current) => ({ ...current, status: page === 1 ? 'loading' : 'loading-more' }));
 
-    fetchPosts({ signal: controller.signal, limit, page })
+    fetchPosts({ signal: controller.signal, limit, page, searchTerm: normalizedSearchTerm })
       .then(({ posts, meta }) => {
         setState((current) => ({
           articles: page === 1
-            ? (posts.length > 0 ? posts : fallbackList)
+            ? (posts.length > 0 ? posts : (normalizedSearchTerm ? [] : fallbackList))
             : [...current.articles, ...posts],
           hasMore: posts.length > 0 ? meta.hasMore : false,
           status: 'success',
-          source: posts.length > 0 ? 'api' : 'fallback',
+          source: posts.length > 0 || normalizedSearchTerm ? 'api' : 'fallback',
         }));
       })
       .catch((error) => {
@@ -42,7 +55,7 @@ export function usePosts(fallbackArticles, limit = null) {
       });
 
     return () => controller.abort();
-  }, [fallbackList, limit, page]);
+  }, [fallbackList, limit, page, normalizedSearchTerm]);
 
   return {
     ...state,

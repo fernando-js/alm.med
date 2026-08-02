@@ -30,11 +30,12 @@ function normalizePost(post) {
   };
 }
 
-export async function fetchPosts({ signal, limit, page } = {}) {
+export async function fetchPosts({ signal, limit, page, searchTerm } = {}) {
   const params = new URLSearchParams();
 
   if (limit) params.set('limit', String(limit));
   if (page) params.set('page', String(page));
+  if (searchTerm) params.set('q', searchTerm);
 
   const query = params.toString();
   const response = await fetch(`${API_BASE_URL}/posts${query ? `?${query}` : ''}`, {
