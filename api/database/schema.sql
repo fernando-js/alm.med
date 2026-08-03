@@ -116,3 +116,20 @@ CREATE TABLE medication_guidance_rules (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_medication_guidance_active_priority (active, priority)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE medication_guidance_cache (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  medication_normalized VARCHAR(220) NOT NULL,
+  context_hash CHAR(64) NOT NULL,
+  context_normalized TEXT NOT NULL,
+  medication_original VARCHAR(220) NOT NULL,
+  guidance_json MEDIUMTEXT NOT NULL,
+  source_type ENUM('table','ai','unmatched') NOT NULL DEFAULT 'ai',
+  hit_count INT UNSIGNED NOT NULL DEFAULT 0,
+  last_used_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_medication_context (medication_normalized, context_hash),
+  INDEX idx_medication_cache_lookup (medication_normalized, context_hash),
+  INDEX idx_medication_cache_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

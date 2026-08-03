@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/config/bootstrap.php';
-const ALM_API_VERSION = '2026-08-02-medication-local-rules';
+const ALM_API_VERSION = '2026-08-02-medication-guidance-cache';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -116,6 +116,23 @@ function ensureMedicationGuidanceStorage(): void {
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_medication_guidance_active_priority (active, priority)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    db()->exec("CREATE TABLE IF NOT EXISTS medication_guidance_cache (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        medication_normalized VARCHAR(220) NOT NULL,
+        context_hash CHAR(64) NOT NULL,
+        context_normalized TEXT NOT NULL,
+        medication_original VARCHAR(220) NOT NULL,
+        guidance_json MEDIUMTEXT NOT NULL,
+        source_type ENUM('table','ai','unmatched') NOT NULL DEFAULT 'ai',
+        hit_count INT UNSIGNED NOT NULL DEFAULT 0,
+        last_used_at DATETIME NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_medication_context (medication_normalized, context_hash),
+        INDEX idx_medication_cache_lookup (medication_normalized, context_hash),
+        INDEX idx_medication_cache_updated (updated_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
     seedMedicationGuidanceRules();
@@ -250,6 +267,63 @@ function findMedicationRule(string $medicationLine, string $contextText, array $
     return null;
 }
 
+function medicationCacheKey(string $medicationLine, string $contextText): array {
+    $medicationNormalized = mb_substr(normalizeClinicalText($medicationLine), 0, 220);
+    $contextNormalized = normalizeClinicalText($contextText);
+
+    return [$medicationNormalized, hash('sha256', $contextNormalized), $contextNormalized];
+}
+
+function findMedicationGuidanceCache(string $medicationLine, string $contextText): ?array {
+    ensureMedicationGuidanceStorage();
+    [$medicationNormalized, $contextHash] = medicationCacheKey($medicationLine, $contextText);
+    if ($medicationNormalized === '') return null;
+
+    $stmt = db()->prepare("SELECT id, guidance_json FROM medication_guidance_cache WHERE medication_normalized=? AND context_hash=? AND source_type <> 'unmatched' LIMIT 1");
+    $stmt->execute([$medicationNormalized, $contextHash]);
+    $row = $stmt->fetch();
+    if (!$row) return null;
+
+    $guidance = json_decode((string)$row['guidance_json'], true);
+    if (!is_array($guidance)) return null;
+
+    $updateStmt = db()->prepare('UPDATE medication_guidance_cache SET hit_count=hit_count+1, last_used_at=NOW() WHERE id=?');
+    $updateStmt->execute([(int)$row['id']]);
+
+    $guidance['name'] = $medicationLine;
+    $guidance['sourceType'] = 'cache';
+    $guidance['sourceLabel'] = ($guidance['sourceLabel'] ?? '') === 'OpenAI fallback' ? 'Cache local (OpenAI fallback)' : ($guidance['sourceLabel'] ?? 'Cache local');
+
+    return $guidance;
+}
+
+function saveMedicationGuidanceCache(string $medicationLine, string $contextText, array $item): void {
+    ensureMedicationGuidanceStorage();
+    [$medicationNormalized, $contextHash, $contextNormalized] = medicationCacheKey($medicationLine, $contextText);
+    if ($medicationNormalized === '') return;
+
+    $cacheItem = $item;
+    $cacheItem['name'] = $medicationLine;
+    $sourceType = in_array(($item['sourceType'] ?? ''), ['table', 'ai', 'unmatched'], true) ? $item['sourceType'] : 'ai';
+
+    $stmt = db()->prepare("INSERT INTO medication_guidance_cache (
+        medication_normalized, context_hash, context_normalized, medication_original, guidance_json, source_type, hit_count, last_used_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+    ON DUPLICATE KEY UPDATE
+        medication_original=VALUES(medication_original),
+        guidance_json=VALUES(guidance_json),
+        source_type=VALUES(source_type),
+        context_normalized=VALUES(context_normalized)");
+    $stmt->execute([
+        $medicationNormalized,
+        $contextHash,
+        $contextNormalized,
+        mb_substr($medicationLine, 0, 220),
+        json_encode($cacheItem, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        $sourceType,
+    ]);
+}
+
 function medicationItemFromRule(string $medicationLine, array $rule): array {
     return [
         'name' => $medicationLine,
@@ -297,13 +371,16 @@ function medicationGuidanceRisk(array $items): array {
 function buildMedicationGuidanceResponse(array $items, array $unknownLines, bool $usedAi, ?string $aiError = null): array {
     [$riskLevel, $riskLabel] = medicationGuidanceRisk($items);
     $tableCount = count(array_filter($items, static fn (array $item): bool => ($item['sourceType'] ?? '') === 'table'));
+    $cacheCount = count(array_filter($items, static fn (array $item): bool => ($item['sourceType'] ?? '') === 'cache'));
+    $aiCount = count(array_filter($items, static fn (array $item): bool => ($item['sourceType'] ?? '') === 'ai'));
+    $unmatchedCount = count(array_filter($items, static fn (array $item): bool => ($item['sourceType'] ?? '') === 'unmatched'));
     $unknownCount = count($unknownLines);
 
     $nextSteps = ['Revisar a lista final antes de orientar o paciente.'];
     if (array_intersect(array_column($items, 'actionLabel'), ['informar_indicacao', 'verificar_contexto'])) {
         $nextSteps[] = 'Completar indicação clínica, função renal, risco de sangramento/trombose e tipo de anestesia quando solicitado.';
     }
-    if ($unknownCount > 0 && !$usedAi) {
+    if ($unmatchedCount > 0) {
         $nextSteps[] = 'Cadastrar novas regras locais para medicamentos não encontrados.';
     }
 
@@ -320,10 +397,10 @@ function buildMedicationGuidanceResponse(array $items, array $unknownLines, bool
         'riskLevel' => $riskLevel,
         'riskLabel' => $riskLabel,
         'summary' => $unknownCount > 0
-            ? "Tabela local encontrou {$tableCount} item(ns); {$unknownCount} item(ns) ficaram sem regra local."
+            ? "Tabela: {$tableCount}. Cache: {$cacheCount}. IA: {$aiCount}. Sem regra: {$unmatchedCount}."
             : "Resultado gerado pela tabela local de medicamentos.",
         'notMedicalOrder' => 'Apoio à triagem: não substitui avaliação médica nem protocolo institucional.',
-        'source' => $usedAi ? 'mixed' : 'table',
+        'source' => $usedAi || $cacheCount > 0 ? 'mixed' : 'table',
         'medications' => $items,
         'redFlags' => array_values(array_unique($redFlags)),
         'nextSteps' => array_values(array_unique($nextSteps)),
@@ -699,22 +776,36 @@ if ($method === 'POST' && $path === '/medication-guidance') {
     $rules = loadMedicationGuidanceRules();
     $items = [];
     $unknownLines = [];
+    $uncachedUnknownLines = [];
 
     foreach (splitMedicationLines($medications) as $medicationLine) {
         $rule = findMedicationRule($medicationLine, $contextText, $rules);
         if ($rule) {
-            $items[] = medicationItemFromRule($medicationLine, $rule);
+            $item = medicationItemFromRule($medicationLine, $rule);
+            $items[] = $item;
+            saveMedicationGuidanceCache($medicationLine, $contextText, $item);
+            continue;
+        }
+
+        $unknownLines[] = $medicationLine;
+        $cachedItem = findMedicationGuidanceCache($medicationLine, $contextText);
+        if ($cachedItem) {
+            $items[] = $cachedItem;
         } else {
-            $unknownLines[] = $medicationLine;
+            $uncachedUnknownLines[] = $medicationLine;
         }
     }
 
     $usedAi = false;
     $aiError = null;
-    if ($unknownLines) {
-        $aiGuidance = requestAiMedicationGuidance($caseData, $unknownLines);
+    if ($uncachedUnknownLines) {
+        $aiGuidance = requestAiMedicationGuidance($caseData, $uncachedUnknownLines);
         $usedAi = count(array_filter($aiGuidance['items'], static fn (array $item): bool => ($item['sourceType'] ?? '') === 'ai')) > 0;
         $aiError = $aiGuidance['error'] ?? null;
+        foreach ($aiGuidance['items'] as $index => $item) {
+            $medicationLine = $uncachedUnknownLines[$index] ?? (string)($item['name'] ?? '');
+            saveMedicationGuidanceCache($medicationLine, $contextText, $item);
+        }
         $items = array_merge($items, $aiGuidance['items']);
     }
 
